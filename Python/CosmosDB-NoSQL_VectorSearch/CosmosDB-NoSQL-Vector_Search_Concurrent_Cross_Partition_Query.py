@@ -27,7 +27,7 @@ AZURE_OPENAI_API_KEY = config['openai_key']
 AZURE_OPENAI_API_VERSION = "2024-02-15-preview"
 EMBEDDING_MODEL = config['openai_embeddings_deployment']
 VECTOR_DIMENSIONS = 1536
-NUM_RECORDS = 50000
+NUM_RECORDS = 10000
 OPENAI_CONCURRENCY = 3
 MAX_RETRIES = 5
 MAX_INGEST_CONCURRENCY = 5
@@ -201,7 +201,7 @@ async def concurrent_query_sample(container, query, parameters):
 
 async def concurrent_vector_search(container, query_embedding, top_k=10):
     query = """
-        SELECT TOP 100 c.id, c.text, VectorDistance(c.embedding, @query_vector) AS Score
+        SELECT TOP 10 c.id, c.text, VectorDistance(c.embedding, @query_vector) AS Score
         FROM c
         ORDER BY VectorDistance(c.embedding, @query_vector)
     """
