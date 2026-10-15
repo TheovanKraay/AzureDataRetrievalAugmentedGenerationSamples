@@ -1,0 +1,17 @@
+# Backend resources only. Apps run locally; there are deliberately no services.
+name: standalone-semantic-reranker-python
+infra:
+  provider: bicep
+  path: infra/azd
+  module: main
+hooks:
+  preprovision:
+    shell: pwsh
+    run: ./scripts/preprovision.ps1
+    interactive: false
+    continueOnError: false
+  postprovision:
+    shell: pwsh
+    run: ./scripts/postprovision.ps1
+    interactive: false
+    continueOnError: false

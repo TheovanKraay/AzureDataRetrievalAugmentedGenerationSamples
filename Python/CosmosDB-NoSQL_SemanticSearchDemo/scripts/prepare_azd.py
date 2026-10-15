@@ -1,0 +1,169 @@
+"""Persist a valid shared account UUID before azd creates any Azure resources."""
+
+import argparse
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import uuid
+import requests
+from azure.identity import AzureCliCredential
+
+NAME_KEY = "AZURE_COSMOS_ACCOUNT_NAME"
+NAME_PATTERN = r"[a-f][0-9a-f]{7}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+
+
+def valid_name(value):
+    return isinstance(value, str) and re.fullmatch(NAME_PATTERN, value) is not None
+
+
+def generate_name():
+    # Accept/reject complete UUIDs. Never change UUID bytes or prepend a letter.
+    for _ in range(128):
+        candidate = str(uuid.uuid4())
+        if valid_name(candidate):
+            return candidate
+    raise RuntimeError("No letter-leading UUID generated after 128 attempts. No name persisted.")
+
+
+def choose_name(values, regenerate_invalid=False):
+    deployed = values.get("COSMOS_ACCOUNT_NAME")
+    if NAME_KEY in values:
+        persisted = values[NAME_KEY]
+        if valid_name(persisted):
+            if valid_name(deployed) and deployed != persisted:
+                raise ValueError("Persisted name and deployed Cosmos output conflict. Inspect state; do not rename.")
+            candidate = persisted
+        else:
+            if not regenerate_invalid:
+                raise ValueError("Persisted account name is invalid. Inspect the failed deployment before "
+                                 "explicit --regenerate-invalid-name recovery.")
+            candidate = deployed if valid_name(deployed) else generate_name()
+    elif "COSMOS_ACCOUNT_NAME" in values:
+        if valid_name(deployed):
+            # Preserve a successful deployment made before the persisted-name hook.
+            candidate = deployed
+        elif regenerate_invalid:
+            candidate = generate_name()
+        else:
+            raise ValueError("Existing Cosmos output name is invalid. Inspect the failed deployment before "
+                             "explicit --regenerate-invalid-name recovery.")
+    else:
+        candidate = generate_name()
+    inference = values.get("INFERENCE_ACCOUNT_NAME")
+    if valid_name(inference) and inference != candidate:
+        raise ValueError("Existing inference output and selected account name conflict. Inspect state; do not rename.")
+    return candidate
+
+
+def azd(executable, root, arguments):
+    result = subprocess.run(
+        [executable, *arguments], cwd=root, capture_output=True, text=True,
+        check=False, timeout=120, shell=False,
+    )
+    if result.returncode:
+        raise RuntimeError("azd environment operation failed; could not read or persist the account name.")
+    return result.stdout
+
+
+def read_environment(executable, root):
+    try:
+        values = json.loads(azd(executable, root, ["env", "get-values", "--output", "json"]))
+    except json.JSONDecodeError:
+        raise ValueError("azd environment output is not valid JSON.") from None
+    if not isinstance(values, dict):
+        raise ValueError("azd environment output must be an object.")
+    environment = values.get("AZURE_ENV_NAME")
+    if not isinstance(environment, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", environment):
+        raise ValueError("Invalid environment name. Select an environment using lowercase letters/digits/hyphens.")
+    if ("AZURE_RESOURCE_GROUP" in values
+            and values["AZURE_RESOURCE_GROUP"] != f"rg-reranker-{environment}"):
+        raise ValueError("Existing resource group output does not match the selected environment.")
+    return values
+
+
+def prepare(project_root, regenerate_invalid=False):
+    root = Path(project_root).resolve()
+    executable = shutil.which("azd")
+    if not executable:
+        raise RuntimeError("azd is required on PATH to persist the account name.")
+    values = read_environment(executable, root)
+    chosen = choose_name(values, regenerate_invalid)
+    if values.get(NAME_KEY) == chosen:
+        return chosen
+    # Only one azd-owned key is changed. No shell interpolation or .azure file rewrite.
+    azd(executable, root, ["env", "set", NAME_KEY, chosen,
+                           "--environment", values["AZURE_ENV_NAME"]])
+    saved = read_environment(executable, root)
+    if saved.get(NAME_KEY) != chosen or saved["AZURE_ENV_NAME"] != values["AZURE_ENV_NAME"]:
+        raise RuntimeError("Could not verify persisted account name. Do not provision until state is resolved.")
+    return chosen
+
+
+def prepare_inference(project_root):
+    root = Path(project_root).resolve()
+    executable = shutil.which("azd")
+    if not executable:
+        raise RuntimeError("azd is required on PATH.")
+    values = read_environment(executable, root)
+    name = values.get(NAME_KEY)
+    if not valid_name(name):
+        raise ValueError("Persist a valid account UUID before checking inference.")
+    try:
+        subscription = str(uuid.UUID(values["AZURE_SUBSCRIPTION_ID"]))
+    except (KeyError, ValueError, TypeError):
+        raise ValueError("AZURE_SUBSCRIPTION_ID must be a UUID.") from None
+    location = values.get("AZURE_LOCATION")
+    if location not in ("uksouth", "eastus2", "westus3"):
+        raise ValueError("Select a supported AZURE_LOCATION before provisioning.")
+    group = f"rg-reranker-{values['AZURE_ENV_NAME']}"
+    resource_id = (f"/subscriptions/{subscription}/resourceGroups/{group}/providers/"
+                   f"Microsoft.InferenceService/inferenceAccounts/{name}")
+    with AzureCliCredential() as credential:
+        token = credential.get_token("https://management.azure.com/.default").token
+        response = requests.get(
+            f"https://management.azure.com{resource_id}?api-version=2026-08-01-preview",
+            headers={"Authorization": f"Bearer {token}"}, timeout=30,
+        )
+    if response.status_code == 404:
+        create = "true"
+    elif response.status_code == 200:
+        account = response.json()
+        properties = account.get("properties", {})
+        if (account.get("id", "").lower() != resource_id.lower()
+                or account.get("location", "").replace(" ", "").lower() != location
+                or properties.get("provisioningState") != "Succeeded"
+                or properties.get("enableKeyBasedAuthentication") is not False):
+            raise ValueError("Existing inference account is incompatible or not ready; inspect it without overwriting.")
+        create = "false"
+    else:
+        raise RuntimeError(f"Inference preflight returned HTTP {response.status_code}. "
+                           "Check Azure CLI identity, permissions and network; no create fallback.")
+    azd(executable, root, ["env", "set", "AZURE_CREATE_INFERENCE", create,
+                          "--environment", values["AZURE_ENV_NAME"]])
+    if read_environment(executable, root).get("AZURE_CREATE_INFERENCE") != create:
+        raise RuntimeError("Could not verify inference creation flag.")
+    return create
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--regenerate-invalid-name", action="store_true",
+                        help="Explicit recovery after a failed deployment; never replace a valid deployed name.")
+    args = parser.parse_args()
+    try:
+        prepare(args.project_root, args.regenerate_invalid_name)
+        prepare_inference(args.project_root)
+    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+        if isinstance(error, (ValueError, RuntimeError)):
+            print(str(error))
+        print("Naming preflight failed. No Azure resources were created by this helper.")
+        return 1
+    print("Naming preflight complete. Letter-leading UUID persisted/reused in the selected azd environment.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

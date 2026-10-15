@@ -13,7 +13,85 @@ the **all keywords / any keywords** radio, and the results/metrics table.
 The screenshot shows the original layout. The current app also reports separate
 retrieval and reranking durations.
 
-## Quick start: no OpenAI needed
+## Recommended quickstart: azd backend and local Python
+
+Read **[all prerequisites](infra/azd/README.md#all-prerequisites)** first,
+including azd, Azure CLI, PowerShell 7 on every OS, Python/venv/pip,
+authentication, subscription permissions, provider registration, network
+access, preview availability, quotas and ongoing container charges.
+Docker, .NET and OpenAI are not required for this standalone Python path.
+
+From this sample directory in PowerShell 7, starting with a clean clone:
+
+```powershell
+python -m venv .venv
+$py = if ($IsWindows) { './.venv/Scripts/python.exe' } else { './.venv/bin/python' }
+& $py -m pip install -r requirements.txt -r requirements-dev.txt
+& $py -m pytest -q tests/unit tests/ui
+az bicep build --file infra/azd/main.bicep --stdout
+
+$tenant = Read-Host 'Tenant ID'
+$subscription = Read-Host 'Subscription ID'
+azd auth login --tenant-id $tenant
+az login --tenant $tenant
+az account set --subscription $subscription
+azd init --environment reranker-python-dev
+azd env set AZURE_SUBSCRIPTION_ID $subscription
+azd env set AZURE_LOCATION uksouth
+azd env select reranker-python-dev
+# Must print false before the FIRST provision. Choose another unused name otherwise.
+az group exists --name rg-reranker-reranker-python-dev --subscription $subscription
+azd provision
+if ($LASTEXITCODE -ne 0) { throw 'Provisioning or configuration hook failed' }
+. ./.local/azd-env.ps1
+```
+
+On Linux/macOS use `python3 -m venv .venv` for the first command, still
+running the subsequent commands in `pwsh`. Use an environment name unique
+in your subscription; replace `reranker-python-dev` consistently if needed.
+
+This creates a dedicated resource group, GUID-named keyless Cosmos and
+inference accounts, database `reranker`, and both sample containers at
+**400 RU/s each**, with vector and full-text policies. Preprovision persists a
+canonical lowercase GUID starting **a-f** for both accounts. It reuses a valid
+existing account output and keeps the persisted GUID on reprovision. Other
+existing-resource accounts are not referenced. Preserve ignored azd state.
+There are no hosted application services. Prefer `azd provision`; `azd up`
+has no application deployment to perform.
+
+The postprovision hook automatically merges the required values into ignored
+`.env` and emits ignored `.local/azd-env.ps1`. It preserves unrelated `.env`
+settings such as OpenAI. A subprocess cannot change your calling shell:
+dot-source as above, especially for live tests or after switching environments.
+Existing process settings override Python `.env`. Restart apps after a switch.
+
+Load and run using **only generated backend configuration**:
+
+```powershell
+& $py scripts/make-fixtures.py
+& $py src/data/data-loader.py `
+  --path_to_json_array tests/fixtures/movies.synthetic.json `
+  --text_field_name text --vector_field_name embedding --re_embed False `
+  --existing-only --max-items 3 --confirm-write --concurrency 1
+if ($LASTEXITCODE -ne 0) { throw 'Fixture loading failed' }
+# Repeat the loader command to verify stable-ID upserts.
+$env:RUN_LIVE_TESTS = '1'
+$env:ALLOW_FIXTURE_UPSERT = '1'
+& $py -m pytest -q tests/live
+Remove-Item Env:RUN_LIVE_TESTS, Env:ALLOW_FIXTURE_UPSERT
+& $py -m streamlit run src/app/cosmos-app.py --server.port 8501
+```
+
+Allow role/index propagation before live checks. Open `http://localhost:8501`;
+try **orbital rescue**, both indexes, full-text search/ranking and reranker
+off/on. Synthetic vectors validate integration, not real embedding quality.
+See [refresh, switching, inventory and destructive cleanup](infra/azd/README.md).
+Do not run `azd down` as a test; leave resources available for inspection.
+Failed provisioning can leave paid partial resources. See
+[naming preflight and recovery](infra/azd/README.md#naming-preflight-and-failed-provisioning)
+before authorizing a replacement name; there is no automatic Azure rollback.
+
+## Alternative quickstart: existing resources, no OpenAI needed
 
 Use full-text retrieval plus optional semantic reranking first. The bundled
 original fixtures need neither an OpenAI resource nor an embedding API call.
@@ -223,7 +301,10 @@ AppTest executes the page and button callbacks, not just a health endpoint.
 
 ### Live, opt-in and fail-loud
 
-First provision, configure and load as above. Put configuration in process
+First provision, configure and load as above. For azd, dot-source
+`. ./.local/azd-env.ps1` and use the live commands in the recommended quickstart;
+do not replace generated endpoints with placeholders below.
+For the existing-resource alternative, put configuration in process
 environment variables for live tests; an enabled suite will not silently skip
 missing settings. This avoids accidentally reading a developer `.env`.
 

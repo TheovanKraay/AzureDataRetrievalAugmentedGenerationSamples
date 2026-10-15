@@ -14,6 +14,13 @@
 - Inference setup is explicit and read-only by default. Use the same Cosmos account
   name, GET before creation, and the returned endpoint. `--confirm-create` and
   `--assign-role` authorize separate actions. Never redeploy Cosmos or add keys.
+- Alternatively, explicitly authorized `azd provision` creates a new backend
+  in its own group. Read [all prerequisites](infra/azd/README.md) first.
+  Preserve ignored `.azure/` state and the persisted letter-leading GUID.
+  Never bypass the preprovision inference existence check or treat 403 as 404.
+  After provisioning, dot-source `. ./.local/azd-env.ps1`; do not manually copy
+  endpoints or commit generated config. Report all created accounts, including
+  partial deployments; do not run `azd down` without cleanup authorization.
 - Preserve the Cosmos timeout regression: `connection_timeout=30` is seconds;
   never reintroduce legacy `request_timeout=30`, which is milliseconds.
 - Offline tests allow loopback runtime IPC only. Keep external TCP, UDP and DNS
