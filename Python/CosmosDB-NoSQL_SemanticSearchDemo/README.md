@@ -2,7 +2,9 @@
 
 A local Streamlit movie-search sample using Azure Cosmos DB for NoSQL,
 Azure OpenAI embeddings and the standalone `azure-data-ai` inference client.
-The existing layout and all search controls are preserved.
+The existing layout and search controls are preserved, with a collapsed
+Advanced reranking section. See the [search guide](SEARCH_GUIDE.md) for manual
+startup, feature walkthroughs, JSON targeting, result limits and sentence diagnostics.
 
 ## Prerequisites
 
@@ -101,3 +103,5 @@ Remove-Item Env:RUN_LIVE_TESTS
 The browser script tests all modes and toggles against the already-running app,
 prints each passing case and stores screenshots only under
 `.local/validation/original-movies/`. It does not manage app processes.
+Add `--matrix advanced` to rerun only advanced cases, or `--matrix baseline`
+for only the original cases. The default runs both.

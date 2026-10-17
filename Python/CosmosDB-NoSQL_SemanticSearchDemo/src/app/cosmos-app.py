@@ -16,6 +16,11 @@ INDEX_NAMES = {
     "QFLAT & Full Text Search Index": "search_qflat",
     "DiskANN & Full Text Search Index": "search_diskann",
 }
+TARGET_FIELDS = {
+    "Title and Description": ("title", "text"),
+    "Title only": ("title",),
+    "Description only": ("text",),
+}
 
 
 def run_search(mode):
@@ -24,13 +29,25 @@ def run_search(mode):
     st.session_state.pop("suggested_listings", None)
     st.session_state.pop("search_error", None)
     try:
+        enabled = st.session_state.get("use_reranker", False)
+        options = None
+        if enabled:
+            options = demo.RerankOptions(
+                document_format=st.session_state.get("rerank_format", "text"),
+                target_paths=TARGET_FIELDS.get(st.session_state.get(
+                    "rerank_fields", "Title and Description"), ()),
+                top_k=st.session_state.get("rerank_top_k", 10),
+                return_sentence_scores=st.session_state.get("sentence_diagnostics", False))
+            options.validate()
         result = demo.search(
             demo.get_container(INDEX_NAMES[st.session_state.index_selection]),
             mode, st.session_state.user_query,
-            use_reranker=st.session_state.get("use_reranker", False),
-            search_type=st.session_state.get("full_text_search_type", "all keywords"))
+            use_reranker=enabled,
+            search_type=st.session_state.get("full_text_search_type", "all keywords"),
+            rerank_options=options)
         st.session_state.search_result = result
-        st.session_state.suggested_listings = pd.DataFrame(result.rows)
+        st.session_state.suggested_listings = pd.DataFrame(
+            [{k: v for k, v in row.items() if k != "sentence_scores"} for row in result.rows])
     except (demo.SearchError, ValueError) as exc:
         st.session_state.search_error = str(exc)
     except Exception:
@@ -44,6 +61,18 @@ with st.sidebar:
     st.text_input("Search input", placeholder="James Bond", key="user_query")
     st.checkbox("Use Semantic Reranker", key="use_reranker",
                 help="Apply semantic reranking with the standalone Azure Data AI inference service")
+    with st.expander("Advanced reranking", expanded=False):
+        advanced_disabled = not st.session_state.use_reranker
+        st.selectbox("Document format", ["text", "json"], key="rerank_format",
+                     disabled=advanced_disabled)
+        st.selectbox("JSON fields", list(TARGET_FIELDS), key="rerank_fields",
+                     disabled=advanced_disabled or st.session_state.rerank_format != "json")
+        st.caption("Description maps to the text field. Only selected JSON fields are sent.")
+        st.number_input("Rerank result limit", min_value=1, max_value=10, value=10, step=1,
+                        key="rerank_top_k", disabled=advanced_disabled)
+        st.checkbox("Sentence-score diagnostics", key="sentence_diagnostics",
+                    disabled=advanced_disabled)
+        st.caption("Service sentence indices are not mapped to source text or JSON fields.")
     disabled = not st.session_state.user_query.strip()
     st.button("Similarity search", key="location_search", disabled=disabled,
               on_click=run_search, args=("vector",))
@@ -79,6 +108,16 @@ elif "search_result" in st.session_state:
     st.write(f"RU consumed: {ru}")
     st.write(f"Semantic reranking: {'✓ Applied' if result.reranked else '✗ Not applied'}")
     st.write(f"Found {len(result.rows)} records.")
+    st.write(f"Retrieved candidates: {result.retrieved_count}; returned results: {len(result.rows)}")
     st.table(st.session_state.suggested_listings)
+    if result.sentence_scores_requested:
+        for rank, row in enumerate(result.rows, 1):
+            with st.expander(f"Sentence scores: result {rank} ({row['id']})", expanded=False):
+                scores = row.get("sentence_scores")
+                if scores:
+                    for score in scores:
+                        st.write(f"Service sentence index: {score['index']}; score: {score['score']}")
+                else:
+                    st.write("Sentence scores: not returned.")
 else:
     st.write("Enter text to get started.")

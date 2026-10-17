@@ -160,26 +160,79 @@ def embed_text(text):
                           "network access and OpenAI credentials/role.") from exc
 
 
-def rerank(client, query, rows):
+@dataclass(frozen=True)
+class RerankOptions:
+    document_format: str = "text"
+    target_paths: tuple[str, ...] = ("title", "text")
+    top_k: int = 10
+    return_sentence_scores: bool = False
+
+    def validate(self):
+        if self.document_format not in ("text", "json"):
+            raise ValueError("Select text or json document format.")
+        if type(self.top_k) is not int or not 1 <= self.top_k <= 10:
+            raise ValueError("Rerank result limit must be an integer between 1 and 10.")
+        if type(self.return_sentence_scores) is not bool:
+            raise ValueError("Sentence-score diagnostics must be on or off.")
+        if self.document_format == "json" and self.target_paths not in (
+                ("title",), ("text",), ("title", "text")):
+            raise ValueError("JSON targeting must select title, text, or title and text.")
+
+
+def sentence_scores(entry):
+    """Keep service indices, never infer sentence text or JSON field alignment."""
+    values = entry.get("sentenceScores")
+    if values is None:
+        return None
+    if not isinstance(values, list):
+        raise SearchError("Invalid reranker response: expected sentence score objects.")
+    seen, result = set(), []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise SearchError("Invalid reranker response: expected sentence score objects.")
+        index, score = value.get("index"), value.get("score")
+        if (type(index) is not int or index < 0 or index in seen
+                or isinstance(score, bool) or not isinstance(score, (int, float))
+                or not math.isfinite(score)):
+            raise SearchError("Invalid reranker response: invalid sentence index/score.")
+        seen.add(index)
+        result.append({"index": index, "score": float(score)})
+    return result
+
+
+def rerank(client, query, rows, options=None):
+    options = options or RerankOptions()
+    options.validate()
     if not rows:
         return []
-    if any(not isinstance(row.get("text"), str) or not row["text"].strip() for row in rows):
-        raise SearchError("Reranking requires nonempty text on every retrieved document.")
+    if len(rows) > 10:
+        raise SearchError("Reranking accepts at most 10 retrieved candidates.")
+    paths = options.target_paths if options.document_format == "json" else ("text",)
+    if any(not isinstance(row.get(path), str) or not row[path].strip()
+           for row in rows for path in paths):
+        raise SearchError("Reranking requires nonempty selected fields on every retrieved document.")
+    # Construct a new whitelist projection, never serialize a whole Cosmos document.
+    documents = ([json.dumps({path: row[path] for path in paths}, ensure_ascii=True)
+                  for row in rows] if options.document_format == "json"
+                 else [row["text"] for row in rows])
+    expected = min(options.top_k, len(rows))
+    payload = {
+        "query": query, "documents": documents, "topK": expected,
+        "sort": True, "returnDocuments": False,
+    }
+    if options.document_format == "json":
+        payload.update(documentType="json", targetPaths=",".join(paths))
+    if options.return_sentence_scores:
+        payload["returnSentenceScore"] = True
     try:
-        response = client.semantic_rerank({
-            "query": query,
-            "documents": [row["text"] for row in rows],
-            "topK": len(rows),
-            "sort": True,
-            "returnDocuments": False,
-        })
+        response = client.semantic_rerank(payload)
     except Exception as exc:
         raise SearchError("Reranking failed. No results are labelled reranked. Check the "
                           "inference endpoint, Semantic Reranker User role, propagation "
                           "and preview availability.") from exc
     scores = response.get("scores") if isinstance(response, Mapping) else None
-    if not isinstance(scores, list) or len(scores) != len(rows):
-        raise SearchError("Invalid reranker response: expected one score per document.")
+    if not isinstance(scores, list) or len(scores) != expected:
+        raise SearchError("Invalid reranker response: unexpected result count.")
     seen, result = set(), []
     for entry in scores:
         if not isinstance(entry, Mapping):
@@ -191,8 +244,12 @@ def rerank(client, query, rows):
             raise SearchError("Invalid reranker response: index/score is missing, invalid or duplicate.")
         seen.add(index)
         # Index mapping is essential: different records can have identical text.
-        result.append({**rows[index], "rerank_score": float(score)})
-    return result
+        row = {**rows[index], "rerank_score": float(score),
+               "retrieval_index": index, "retrieval_rank": index + 1}
+        if options.return_sentence_scores:
+            row["sentence_scores"] = sentence_scores(entry)
+        result.append(row)
+    return sorted(result, key=lambda row: row["rerank_score"], reverse=True)
 
 
 def build_query(mode, text, search_type="all keywords", vector=None):
@@ -239,11 +296,16 @@ class SearchResult:
     ru: float | None
     server_seconds: float | None
     reranked: bool
+    retrieved_count: int = 0
+    sentence_scores_requested: bool = False
 
 
 def search(container, mode, text, use_reranker=False, inference_client=None,
-           embedder=None, search_type="all keywords"):
+           embedder=None, search_type="all keywords", rerank_options=None):
     start = time.perf_counter()
+    options = (rerank_options or RerankOptions()) if use_reranker else RerankOptions()
+    if use_reranker:
+        options.validate()
     embedding_seconds = 0.0
     vector = None
     if mode in ("vector", "hybrid"):
@@ -273,10 +335,12 @@ def search(container, mode, text, use_reranker=False, inference_client=None,
         raise SearchError("Search failed. Check Cosmos data-plane permissions, container "
                           "setup, indexing readiness and network access.") from exc
     retrieval_seconds = time.perf_counter() - retrieval_start
+    retrieved_count = len(rows)
     rerank_seconds, applied = 0.0, False
     if use_reranker and rows:
         rerank_start = time.perf_counter()
-        rows = rerank(inference_client or get_inference_client(), text, rows)
+        rows = rerank(inference_client or get_inference_client(), text, rows, options)
         rerank_seconds, applied = time.perf_counter() - rerank_start, True
     return SearchResult(rows, query, embedding_seconds, retrieval_seconds, rerank_seconds,
-                        time.perf_counter() - start, ru, server_seconds, applied)
+                        time.perf_counter() - start, ru, server_seconds, applied,
+                        retrieved_count, applied and options.return_sentence_scores)

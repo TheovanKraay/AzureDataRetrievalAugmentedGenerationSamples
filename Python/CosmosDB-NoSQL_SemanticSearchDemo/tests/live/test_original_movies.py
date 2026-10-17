@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from search_demo import search, validate_vector
+from search_demo import RerankOptions, search, validate_vector
 from seed_movies import SOURCE, read_source
 
 pytestmark = pytest.mark.live
@@ -45,3 +45,38 @@ def test_real_embeddings_every_mode_and_toggle(live_containers, mode, search_typ
             assert result.embedding_seconds > 0
         if enabled:
             assert all(math.isfinite(row["rerank_score"]) for row in result.rows)
+
+
+@pytest.mark.parametrize("format,paths,k,diagnostics", [
+    ("text", ("title", "text"), 1, False),
+    ("text", ("title", "text"), 3, True),
+    ("json", ("title",), 1, True),
+    ("json", ("text",), 3, True),
+    ("json", ("title", "text"), 10, True),
+    ("json", ("title", "text"), 3, False),
+])
+def test_live_advanced_subsets(live_containers, format, paths, k, diagnostics):
+    options = RerankOptions(format, paths, k, diagnostics)
+    for container in live_containers.values():
+        baseline = search(container, "vector", "SPECTRE spy")
+        # Same real embedding/retrieval path, with no seed or other writes.
+        off = search(container, "vector", "SPECTRE spy", rerank_options=options)
+        assert [r["id"] for r in off.rows] == [r["id"] for r in baseline.rows]
+        assert not off.reranked and not off.sentence_scores_requested
+        result = search(container, "vector", "SPECTRE spy", use_reranker=True,
+                        rerank_options=options)
+        assert result.reranked
+        assert len(result.rows) == min(k, result.retrieved_count)
+        assert len({row["retrieval_index"] for row in result.rows}) == len(result.rows)
+        for row in result.rows:
+            original = baseline.rows[row["retrieval_index"]]
+            assert all(row[key] == original[key] for key in ("id", "title", "text"))
+            assert math.isfinite(row["rerank_score"])
+            assert row["retrieval_rank"] == row["retrieval_index"] + 1
+            if diagnostics:
+                # Presence is service-dependent. Validate returned values without inventing text.
+                for score in row["sentence_scores"] or []:
+                    assert type(score["index"]) is int and score["index"] >= 0
+                    assert math.isfinite(score["score"])
+            else:
+                assert "sentence_scores" not in row

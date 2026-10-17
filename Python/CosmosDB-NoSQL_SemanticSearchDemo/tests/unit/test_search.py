@@ -29,7 +29,8 @@ def test_rerank_contract_preserves_metadata_and_duplicate_text():
         "topK": 2, "sort": True, "returnDocuments": False,
     })
     assert [r["id"] for r in result] == ["b", "a"]
-    assert result[0] == {**original[1], "rerank_score": 0.9}
+    assert result[0] == {**original[1], "rerank_score": 0.9,
+                         "retrieval_index": 1, "retrieval_rank": 2}
     assert original == before
 
 

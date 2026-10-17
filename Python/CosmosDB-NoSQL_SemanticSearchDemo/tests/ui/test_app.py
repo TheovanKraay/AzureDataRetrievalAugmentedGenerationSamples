@@ -31,10 +31,17 @@ def test_startup_does_not_create_clients_or_write(monkeypatch):
     app = AppTest.from_file(str(APP)).run()
     assert not app.exception
     assert len(app.button) == 4
-    assert len(app.selectbox) == 1
-    assert len(app.checkbox) == 1
+    assert len(app.selectbox) == 3
+    assert len(app.checkbox) == 2
     assert len(app.radio) == 1
     assert all(button.disabled for button in app.button)
+    assert app.selectbox(key="rerank_format").value == "text"
+    assert app.number_input(key="rerank_top_k").value == 10
+    assert not app.checkbox(key="sentence_diagnostics").value
+    assert app.selectbox(key="rerank_format").disabled
+    assert app.selectbox(key="rerank_fields").disabled
+    assert app.number_input(key="rerank_top_k").disabled
+    assert app.checkbox(key="sentence_diagnostics").disabled
 
 
 @pytest.mark.parametrize("button", ["location_search", "full_text_search",
@@ -92,3 +99,45 @@ def test_missing_openai_visible(monkeypatch):
     app.text_input(key="user_query").set_value("rescue").run()
     app.button(key="location_search").click().run()
     assert "AZURE_OPENAI_EMBEDDING_DEPLOYMENT" in app.error[0].value
+
+
+@pytest.mark.parametrize("format,fields", [
+    ("text", "Title and Description"), ("json", "Title only"),
+    ("json", "Description only"), ("json", "Title and Description"),
+])
+@pytest.mark.parametrize("diagnostics", [False, True])
+def test_advanced_ui_subset_details_and_off(monkeypatch, format, fields, diagnostics):
+    _, inference = fake_services(monkeypatch)
+    inference.semantic_rerank.return_value = {
+        "scores": [{"index": 1, "score": 0.9,
+                    "sentenceScores": [{"index": 7, "score": 0.75}]}]}
+    app = AppTest.from_file(str(APP)).run()
+    app.text_input(key="user_query").set_value("rescue")
+    app.checkbox(key="use_reranker").check().run()
+    app.selectbox(key="rerank_format").set_value(format).run()
+    if format == "json":
+        app.selectbox(key="rerank_fields").set_value(fields)
+    app.number_input(key="rerank_top_k").set_value(1)
+    app.checkbox(key="sentence_diagnostics").set_value(diagnostics).run()
+    app.button(key="full_text_ranking").click().run()
+    assert not app.exception and not app.error
+    assert len(app.table) == 1 and len(app.table[0].value) == 1
+    assert app.table[0].value.iloc[0]["id"] == "b"
+    assert "sentence_scores" not in app.table[0].value.columns
+    assert app.session_state.search_result.retrieved_count == 2
+    payload = inference.semantic_rerank.call_args.args[0]
+    assert payload["topK"] == 1
+    assert (payload.get("documentType") == "json") is (format == "json")
+    if format == "json":
+        assert payload["targetPaths"] == {
+            "Title only": "title", "Description only": "text",
+            "Title and Description": "title,text"}[fields]
+    assert ("returnSentenceScore" in payload) is diagnostics
+    text = "\n".join(item.value for item in app.markdown)
+    assert ("Service sentence index: 7; score: 0.75" in text) is diagnostics
+    app.checkbox(key="use_reranker").uncheck().run()
+    assert app.number_input(key="rerank_top_k").disabled
+    app.button(key="full_text_ranking").click().run()
+    assert len(app.table[0].value) == 2
+    assert inference.semantic_rerank.call_count == 1
+    assert not app.session_state.search_result.sentence_scores_requested
