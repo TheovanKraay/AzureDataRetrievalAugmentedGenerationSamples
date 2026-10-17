@@ -4,7 +4,23 @@ infra:
   provider: bicep
   path: infra/azd
   module: main
+# No services to package/deploy. Bootstrap names before early parameter validation;
+# authorize inference only in preprovision, after azd resolves the selected target.
+workflows:
+  up:
+    steps:
+      - azd: provision
 hooks:
+  preup:
+    shell: pwsh
+    run: ./scripts/preup.ps1
+    interactive: false
+    continueOnError: false
+  postup:
+    shell: pwsh
+    run: ./scripts/postup.ps1
+    interactive: false
+    continueOnError: false
   preprovision:
     shell: pwsh
     run: ./scripts/preprovision.ps1

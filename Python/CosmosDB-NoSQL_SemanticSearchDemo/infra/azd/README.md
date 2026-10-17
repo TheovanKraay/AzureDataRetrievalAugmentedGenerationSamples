@@ -2,9 +2,17 @@
 
 This path is separate from the existing-resource setup in `../README.md`.
 Run azd from the directory containing the selected `azure.yaml`, not this
-infra directory. No web app, App Service plan, container image, OpenAI
-resource or cloud application deployment is included. Prefer `azd provision`.
-`azd up` also performs provisioning but has no application services to deploy.
+infra directory. No web app, App Service plan, container image or cloud
+application deployment is included. Use `azd up` for dependency bootstrap,
+backends, private config and bounded original-movie seeding with real embeddings.
+`azd provision` deliberately performs no seeding. Azure OpenAI is now included.
+
+| Hook | Responsibility |
+| --- | --- |
+| `preup` | Bootstrap dependencies and persist/reuse `AZURE_COSMOS_ACCOUNT_NAME`; reset `AZURE_CREATE_INFERENCE=false` without credentials or Azure requests. |
+| `preprovision` | Mandatory authenticated inference GET using azd's resolved subscription/location; only HTTP 404 authorizes creation. |
+| `postprovision` | Generate private local configuration, including the deployed embedding settings. |
+| `postup` | Batch real embeddings and upsert the bounded `original-movies-v1-` dataset, without deleting unrelated records. |
 
 ## All prerequisites
 
@@ -19,17 +27,17 @@ An upgrade to the latest azd is not required merely to use this sample.
 | Azure Developer CLI | Install azd; implementation baseline 1.25.6. `azd version`. Authenticate with `azd auth login`. |
 | Azure CLI | Install and run `az version`, `az login --tenant <tenant-id>`, `az account set --subscription <subscription-id>`. Required by inference preflight via `AzureCliCredential`, local `DefaultAzureCredential`, and verification/existing-resource commands. The postprovision configuration writer uses azd instead. |
 | PowerShell 7 | `pwsh --version`. Required for hooks on Windows, Linux and macOS. Windows PowerShell 5.1 is not sufficient. Launch `pwsh` for all quickstart commands. |
-| Python 3.10+, venv, pip | `python --version`; create `.venv` and install both requirements files before provisioning. On Linux install the distribution's venv package if necessary. On macOS/Linux use `python3` to create the venv. The hook uses that venv, including `python-dotenv`, not an arbitrary global interpreter. |
+| Python 3.10+, venv, pip | Install Python/venv/pip. Preprovision creates the venv and installs both requirements files. On Linux install the distribution's venv package if necessary. On macOS/Linux bootstrap uses `python3`. |
 | .NET 10 SDK | Required only for the combined root's .NET app/tests. `dotnet --list-sdks`. Not required for standalone Python. |
 | Bicep | azd manages its Bicep compiler. `az bicep version` / `az bicep install` manage Azure CLI's separate compiler for explicit compile checks. A standalone `bicep` executable is optional, not another mandatory install. New preview resource types may produce type-information warnings; ARM acceptance is a separate gate. |
 | Public network and trusted TLS | Access to Azure login, ARM, Cosmos, inference, PyPI, NuGet, azd/Bicep downloads and package feeds. Install required corporate CA trust correctly; never disable certificate validation. Cosmos .NET Direct mode also needs its documented outbound TCP connectivity; `COSMOS_CONNECTION_MODE=Gateway` is an alternative on HTTPS-only networks. |
 | Identity, subscription, tenant | Use the same Entra user in azd and Azure CLI. Set the intended subscription in both. `azd auth login` does not replace `az login` for local SDK credentials. Remove stale service-principal credential variables or choose a clean shell if they cause DefaultAzureCredential to use another identity. |
 | Subscription permissions | Permission to create a resource group and the resources at subscription scope, create Cosmos SQL role assignments, and create Azure RBAC role assignments. Contributor alone cannot grant all RBAC roles. Owner or an equivalent combination of resource Contributor and RBAC administration is needed. |
-| Registered providers | `Microsoft.DocumentDB` and `Microsoft.InferenceService` must be registered in this subscription. Registration itself needs permission and may take time. Registration does not guarantee preview entitlement. |
+| Registered providers | `Microsoft.DocumentDB`, `Microsoft.InferenceService`, and `Microsoft.CognitiveServices` must be registered. Registration needs permission and may take time; it does not guarantee preview entitlement. |
 | Availability, policy and quota | Confirm inference API/region access, Cosmos account and provisioned RU quotas, and subscription policies. Default is `uksouth`; this template allows `uksouth`, `eastus2`, `westus3`. Both accounts use the selected region. |
 | Data roles and propagation | IaC grants the signed-in azd user Cosmos Built-in Data Contributor on the new account and Semantic Reranker User on the new inference account. Wait for propagation before loading/searching. Do not respond to 403 by enabling keys or broadening roles. |
 | Paid resources | Dedicated manual 400 RU/s per container, continuously billed until removal, plus storage and inference charges. Python creates two containers (800 RU/s); combined root creates four (1600 RU/s). No 10,000 RU/s default or autoscale. Review current Azure pricing before provisioning. |
-| Optional real embeddings | An existing compatible 1536-dimensional OpenAI embedding deployment, network access, and OpenAI data role or private API key. Not needed for synthetic preembedded fixtures, full-text queries or reranking. No OpenAI deployment is created here. |
+| Real embeddings | Included keyless OpenAI account with custom subdomain and scoped Cognitive Services OpenAI User role. Default UKSouth `text-embedding-3-small` version 1, GlobalStandard capacity 30 requires available quota. Global processing is not limited to UKSouth. Pay-per-token, not provisioned throughput. Configure model/version/deployment/SKU/capacity/region with variables documented in the sample README. Unavailable model or quota fails; no fake vectors or automatic fallback. |
 | Optional browser tooling | Browser for manual interaction. Playwright/browser downloads only for the separate real browser tests. Docker is **not required**. |
 | Private azd state | Keep the selected environment's ignored `.azure/` state. The preprovision hook persists `AZURE_COSMOS_ACCOUNT_NAME` before ARM runs. Losing this state after partial provisioning can create another account; inspect Azure before recovering state. Do not copy an environment's name into another environment. |
 
@@ -115,7 +123,14 @@ References: [azd environment variables](https://learn.microsoft.com/azure/develo
 
 ## Naming preflight and failed provisioning
 
-The `preprovision` hook runs automatically, before resource creation. Run it
+The custom `up` workflow contains only `azd: provision`. `preup` performs local
+bootstrap: dependencies, persisted naming, and an explicit no-create reset.
+It does not resolve subscription/location, authenticate, or call Azure.
+`preprovision` resets stale authorization again, then performs the mandatory
+authenticated inference GET against azd's resolved selection. Missing selection
+fails closed; no CLI-default fallback exists. HTTP 404 alone changes the creation
+decision to `true`; an existing compatible account keeps it `false`.
+Run the full preparation script
 explicitly to inspect naming state without provisioning resources:
 
 ```powershell
@@ -150,6 +165,25 @@ can coexist with those partial resources in the dedicated group. These hooks
 do not delete or roll back Azure resources. Record partial and replacement
 accounts separately; keep them for inspection until cleanup is authorized.
 
+### Hook parameter-refresh verification
+
+When validating lifecycle changes, start with no `.azure` state and run only
+`azd up` with an explicit environment, subscription and location. Do not count
+an earlier `azd env new`, `init`, or failed first attempt as a first-use pass.
+Inspect the actual ARM deployment parameter, not only azd environment readback:
+
+```powershell
+# Supply the same explicit subscription and environment used for azd up.
+az deployment group show --subscription $subscription `
+  --resource-group "rg-reranker-$environment" --name reranker-backend `
+  --query 'properties.parameters.createInference.value' -o tsv
+```
+
+A successful fresh deployment must record `true`; a successful repeat must record
+`false`, with the same account GUID. If the fresh deployment receives the bootstrap
+`false` instead of the authenticated decision, stop: parameter refresh is not
+verified. Do not bypass the GET, force creation, or retry inference PUT manually.
+
 ## Generated local configuration
 
 The postprovision hook reads `azd env get-values --output json` in the
@@ -160,13 +194,14 @@ shell evaluation of azd text. Output values are never copied into tracked files.
 
 | Destination | Generated values |
 | --- | --- |
-| Python `.env` | `COSMOS_URI`, `COSMOS_DB_DATABASE`, `AZURE_AI_INFERENCE_ENDPOINT` |
+| Python `.env` | `COSMOS_URI`, `COSMOS_DB_DATABASE`, `AZURE_AI_INFERENCE_ENDPOINT`, OpenAI endpoint/deployment/model/version/API version, and `AZURE_OPENAI_AUTH_MODE=entra` |
 | `.local/azd-env.ps1` | Same values plus account/group/environment metadata for inspection |
 | Combined root `.local/azd-env.ps1` | Also `COSMOS_DB_ENDPOINT`, `INFERENCE_ENDPOINT`, `COSMOS_DB_CONTAINER_QFLAT`, `COSMOS_DB_CONTAINER_DISKANN` |
 | Combined root `python/` | Its `.env` and `.local/azd-env.ps1` are refreshed too |
 
 Only the managed Python dotenv bindings are replaced. Unrelated values,
-including optional OpenAI settings and multiline bindings, are preserved.
+including multiline bindings, are preserved. OpenAI deployment settings are
+managed by azd; any preserved manual API key is ignored in generated Entra mode.
 Files are staged before replacement, with rollback on ordinary write errors.
 After an interrupted process or machine failure, stop apps and rerun the
 hook before using config. Do not run configuration writers concurrently.
@@ -183,8 +218,8 @@ Python also reads its `.env` directly. Existing process variables take
 precedence, so always dot-source again after switching and restart apps.
 .NET does not load `.env`; it receives the dot-sourced process environment.
 `DEMO_LOAD_DOTENV=false` disables Python dotenv loading. Dot-sourcing still
-supplies its required values. Optional OpenAI/credential settings remain
-operator-owned; review them when switching tenants.
+supplies its required values. Review credential settings when switching tenants.
+The launcher dot-sources config automatically for its owned app processes.
 
 ## Refresh, switch, reprovision
 
@@ -200,8 +235,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Configuration refresh failed' }
 
 Replace the environment name with the combined root's name when there.
 Do not rely on refresh invoking hooks; the explicit hook call is intentional.
-For a new environment use `azd env new <unique-name>`, set subscription and
-location as in the quickstart, then `azd provision`. Valid persisted account
+For a new environment, run `azd up` directly, optionally passing
+`--environment <unique-name> --subscription <id> --location uksouth`.
+No prior environment-creation command is required. Valid persisted account
 names are not overridden. Reprovision regenerates local config automatically; select
 the environment first instead of using an unrelated shell's cached settings.
 
@@ -215,6 +251,9 @@ az cosmosdb list --subscription $env:AZURE_SUBSCRIPTION_ID `
   --query '[].{name:name,id:id,endpoint:documentEndpoint,localAuthDisabled:disableLocalAuth,capabilities:capabilities[].name}' -o json
 az resource show --ids $env:INFERENCE_ACCOUNT_ID --api-version 2026-08-01-preview `
   --query '{name:name,id:id,endpoint:properties.endpoint}' -o json
+az cognitiveservices account list --subscription $env:AZURE_SUBSCRIPTION_ID `
+  --resource-group $env:AZURE_RESOURCE_GROUP `
+  --query '[].{name:name,id:id,location:location,localAuthDisabled:properties.disableLocalAuth}' -o json
 ```
 
 Keep account inventory and live logs private. Do not execute cleanup in

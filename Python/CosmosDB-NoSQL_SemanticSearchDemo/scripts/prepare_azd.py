@@ -101,6 +101,25 @@ def prepare(project_root, regenerate_invalid=False):
     return chosen
 
 
+def bootstrap(project_root, regenerate_invalid=False):
+    """Local naming only. Never interpret unavailable first-use target flags."""
+    chosen = prepare(project_root, regenerate_invalid)
+    root = Path(project_root).resolve()
+    executable = shutil.which("azd")
+    if not executable:
+        raise RuntimeError("azd is required on PATH.")
+    values = read_environment(executable, root)
+    # Reset even a previously authorized true. Only this run's authenticated
+    # preprovision GET may authorize creation. This value is not an existence claim.
+    azd(executable, root, ["env", "set", "AZURE_CREATE_INFERENCE", "false",
+                          "--environment", values["AZURE_ENV_NAME"]])
+    saved = read_environment(executable, root)
+    if (saved.get("AZURE_CREATE_INFERENCE") != "false" or saved.get(NAME_KEY) != chosen
+            or saved["AZURE_ENV_NAME"] != values["AZURE_ENV_NAME"]):
+        raise RuntimeError("Could not verify fail-closed bootstrap state.")
+    return chosen
+
+
 def prepare_inference(project_root):
     root = Path(project_root).resolve()
     executable = shutil.which("azd")
@@ -152,16 +171,22 @@ def main():
     parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--regenerate-invalid-name", action="store_true",
                         help="Explicit recovery after a failed deployment; never replace a valid deployed name.")
+    parser.add_argument("--bootstrap-only", action="store_true",
+                        help="Preup: persist the name and disable creation without resolving a target or calling Azure.")
     args = parser.parse_args()
     try:
-        prepare(args.project_root, args.regenerate_invalid_name)
-        prepare_inference(args.project_root)
+        bootstrap(args.project_root, args.regenerate_invalid_name)
+        if not args.bootstrap_only:
+            decision = prepare_inference(args.project_root)
     except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
         if isinstance(error, (ValueError, RuntimeError)):
             print(str(error))
         print("Naming preflight failed. No Azure resources were created by this helper.")
         return 1
-    print("Naming preflight complete. Letter-leading UUID persisted/reused in the selected azd environment.")
+    if args.bootstrap_only:
+        print("Local bootstrap complete. UUID persisted/reused; inference creation disabled pending preprovision authorization.")
+    else:
+        print(f"Authenticated inference preflight complete. AZURE_CREATE_INFERENCE={decision}.")
     return 0
 
 

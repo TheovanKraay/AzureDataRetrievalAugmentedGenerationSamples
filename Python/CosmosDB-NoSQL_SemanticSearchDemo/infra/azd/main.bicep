@@ -24,6 +24,17 @@ param cosmosAccountName string
 @allowed(['true', 'false'])
 param createInference string
 
+param openAiLocation string = 'uksouth'
+@allowed(['text-embedding-3-small', 'text-embedding-3-large'])
+param embeddingModel string = 'text-embedding-3-small'
+param embeddingVersion string = '1'
+param embeddingDeployment string = 'text-embedding-3-small'
+@allowed(['GlobalStandard', 'Standard', 'DataZoneStandard'])
+param embeddingSku string = 'GlobalStandard'
+@minValue(1)
+@maxValue(100)
+param embeddingCapacity int = 30
+
 resource group 'Microsoft.Resources/resourceGroups@2021-04-01' = {
   name: 'rg-reranker-${environmentName}'
   location: location
@@ -53,3 +64,24 @@ output COSMOS_DB_DATABASE string = backend.outputs.databaseName
 output INFERENCE_ACCOUNT_NAME string = backend.outputs.accountName
 output INFERENCE_ACCOUNT_ID string = backend.outputs.inferenceAccountId
 output AZURE_AI_INFERENCE_ENDPOINT string = backend.outputs.inferenceEndpoint
+
+module embeddings 'embeddings.bicep' = {
+  name: 'embeddings'
+  scope: group
+  params: {
+    accountName: cosmosAccountName
+    principalId: principalId
+    location: openAiLocation
+    modelName: embeddingModel
+    modelVersion: embeddingVersion
+    deploymentName: embeddingDeployment
+    skuName: embeddingSku
+    capacity: embeddingCapacity
+  }
+}
+
+output AZURE_OPENAI_ENDPOINT string = embeddings.outputs.endpoint
+output AZURE_OPENAI_EMBEDDING_DEPLOYMENT string = embeddings.outputs.deployedName
+output AZURE_OPENAI_EMBEDDING_MODEL string = embeddingModel
+output AZURE_OPENAI_EMBEDDING_VERSION string = embeddingVersion
+output AZURE_OPENAI_API_VERSION string = '2024-02-01'

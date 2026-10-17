@@ -1,8 +1,76 @@
 import os
 import ipaddress
 import socket
+from contextlib import contextmanager, ExitStack
+from importlib import import_module
 
 import pytest
+
+import search_demo
+
+
+# Keep original wrappers: individual tests may monkeypatch their module names.
+_CLIENT_FACTORIES = (
+    search_demo.get_credential,
+    search_demo.get_cosmos_client,
+    search_demo.get_inference_client,
+    search_demo.get_embedding_client,
+)
+
+
+@contextmanager
+def _client_cache_scope(factories, constructor_targets):
+    """Own test-created clients, including evicted entries and imported factory aliases."""
+    factories = tuple(factories)
+    for factory in factories:
+        factory.cache_clear()
+    with pytest.MonkeyPatch.context() as patches, ExitStack() as resources:
+        owned = set()
+
+        def track(constructor):
+            def create(*args, **kwargs):
+                instance = constructor(*args, **kwargs)
+                close = getattr(instance, "close", None)
+                if callable(close) and id(instance) not in owned:
+                    owned.add(id(instance))
+                    # LIFO closes clients before the credential they depend on.
+                    # Retain the bound closer even if the LRU later evicts the client.
+                    resources.callback(close)
+                return instance
+            return create
+
+        for module, name in constructor_targets:
+            patches.setattr(module, name, track(getattr(module, name)))
+        try:
+            yield
+        finally:
+            try:
+                # Never call a cached factory during cleanup: that could create a client.
+                resources.close()
+            finally:
+                for factory in factories:
+                    factory.cache_clear()
+
+
+@pytest.fixture
+def client_cache_scope():
+    """Expose the test-only lifecycle helper for offline regression tests."""
+    return _client_cache_scope
+
+
+@pytest.fixture(autouse=True)
+def isolate_client_caches(offline_guard):
+    # The guard sets/validates this test's environment before clients can be created.
+    # Track SDK constructors rather than replacing factory functions, so aliases
+    # imported with "from search_demo import ..." use the same isolated caches.
+    targets = (
+        (import_module("azure.identity"), "DefaultAzureCredential"),
+        (import_module("azure.cosmos"), "CosmosClient"),
+        (import_module("azure.data.ai"), "InferenceClient"),
+        (import_module("openai"), "AzureOpenAI"),
+    )
+    with _client_cache_scope(_CLIENT_FACTORIES, targets):
+        yield
 
 
 @pytest.fixture(autouse=True)

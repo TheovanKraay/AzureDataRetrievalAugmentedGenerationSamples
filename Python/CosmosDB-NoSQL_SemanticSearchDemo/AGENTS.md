@@ -1,5 +1,19 @@
 # Agent boundaries
 
+- Default `azd up` bootstraps dependencies and runs the bounded original-movie
+  real-embedding seed only in `postup`. `postprovision` is config-only.
+  Preserve `original-movies-v1-` ownership, model provenance and unrelated data.
+  `pwsh ./scripts/start.ps1` loads generated config and supervises the local app;
+  startup has no writes. See README.md for this default, README.manual.md for
+  the older synthetic integration workflow.
+
+- `preup` persists/reuses `AZURE_COSMOS_ACCOUNT_NAME` and resets
+  `AZURE_CREATE_INFERENCE=false`, without target guessing, credentials or Azure
+  requests. `preprovision` uses azd's resolved selection for the mandatory
+  authenticated inference GET; only HTTP 404 authorizes creation.
+  `postprovision` generates private config only. `postup` performs the real seed.
+  Default infrastructure includes keyless OpenAI; no manual loader is required.
+
 - Work only in this sample unless the requester explicitly expands scope.
 - Read the root README and the applicable `cosmosdb-best-practices` skill before
   Cosmos SDK changes. No account/database provisioning, role changes or cleanup
@@ -27,11 +41,12 @@
   blocked and keep service seams mocked.
 - Never commit `.env`, virtual environments, private endpoints, subscription/account
   identifiers, tokens, private feeds, service logs or internal attachments.
-- Fixtures are original MIT-licensed synthetic text and deterministic integration
-  vectors. They do not measure embedding quality. Keep stable IDs.
+- Legacy integration fixtures use original MIT-licensed text and deterministic
+  vectors; they do not measure embedding quality. The default original-movie
+  dataset uses real embeddings from the deployed model. Keep both namespaces stable.
 - Test first. Do not claim live verification from mocks or HTTP health.
 
-## Commands from the sample root
+## Offline/manual development commands from the sample root
 
 ```powershell
 python -m venv .venv
@@ -41,8 +56,9 @@ python -m venv .venv
 & .\.venv\Scripts\python.exe -m streamlit run src/app/cosmos-app.py
 ```
 
-The README covers explicit provisioning and confirmed fixture loading. Live tests
-require private environment settings, `RUN_LIVE_TESTS=1`, and loaded fixtures.
+README.md covers automatic provisioning and real-embedding seeding; README.manual.md
+covers the separate legacy fixture workflow. Live tests require private environment
+settings, `RUN_LIVE_TESTS=1`, and the dataset belonging to the selected suite.
 Write tests additionally require `ALLOW_FIXTURE_UPSERT=1`. Enabled tests must fail,
 not skip, when prerequisites are missing. Never execute cleanup as part of testing.
 Do not commit or push unless explicitly asked. Return changed files, commands,

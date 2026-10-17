@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import uuid
+import sys
 
 import pytest
 
@@ -18,6 +19,53 @@ OTHER = "b0000000-0000-4000-8000-000000000002"
 NUMERIC = "10000000-0000-4000-8000-000000000001"
 KEY = "AZURE_COSMOS_ACCOUNT_NAME"
 
+
+@pytest.mark.parametrize("previous", [None, "true", "false"])
+def test_bootstrap_resets_creation_without_subscription_or_credentials(tmp_path, monkeypatch, previous):
+    store = {"AZURE_ENV_NAME": "offline-one", KEY: VALID}
+    if previous is not None:
+        store["AZURE_CREATE_INFERENCE"] = previous
+    monkeypatch.setattr(naming, "prepare", lambda *args: VALID)
+    monkeypatch.setattr(naming.shutil, "which", lambda _: "/mock/azd")
+    monkeypatch.setattr(naming, "read_environment", lambda *args: dict(store))
+    monkeypatch.setattr(naming, "AzureCliCredential", lambda: pytest.fail("Bootstrap must not authenticate"))
+    monkeypatch.setattr(naming.requests, "get", lambda *args, **kwargs: pytest.fail("Bootstrap must not call Azure"))
+
+    def persist(executable, root, args):
+        assert args == ["env", "set", "AZURE_CREATE_INFERENCE", "false",
+                        "--environment", "offline-one"]
+        store["AZURE_CREATE_INFERENCE"] = args[3]
+
+    monkeypatch.setattr(naming, "azd", persist)
+    assert naming.bootstrap(tmp_path) == VALID
+    assert store == {"AZURE_ENV_NAME": "offline-one", KEY: VALID,
+                     "AZURE_CREATE_INFERENCE": "false"}
+
+
+def test_bootstrap_cli_never_runs_authorization(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["prepare_azd.py", "--project-root", str(tmp_path), "--bootstrap-only"])
+    monkeypatch.setattr(naming, "bootstrap", lambda *args: VALID)
+    monkeypatch.setattr(naming, "prepare_inference", lambda *args: pytest.fail("Authorization is preprovision-only"))
+    assert naming.main() == 0
+
+
+def test_default_cli_authorizes_only_after_reset(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(sys, "argv", ["prepare_azd.py", "--project-root", str(tmp_path)])
+    monkeypatch.setattr(naming, "bootstrap", lambda *args: calls.append("reset"))
+    monkeypatch.setattr(naming, "prepare_inference", lambda *args: calls.append("get") or "true")
+    assert naming.main() == 0
+    assert calls == ["reset", "get"]
+
+
+def test_bootstrap_must_verify_no_create_was_persisted(tmp_path, monkeypatch):
+    monkeypatch.setattr(naming, "prepare", lambda *args: VALID)
+    monkeypatch.setattr(naming.shutil, "which", lambda _: "/mock/azd")
+    monkeypatch.setattr(naming, "read_environment", lambda *args: {
+        "AZURE_ENV_NAME": "offline-one", KEY: VALID, "AZURE_CREATE_INFERENCE": "true"})
+    monkeypatch.setattr(naming, "azd", lambda *args: None)
+    with pytest.raises(RuntimeError, match="fail-closed bootstrap"):
+        naming.bootstrap(tmp_path)
 
 def test_generation_retries_numeric_leading_whole_uuids(monkeypatch):
     candidates = iter([uuid.UUID(NUMERIC), uuid.UUID(VALID)])
@@ -154,6 +202,7 @@ def test_preprovision_and_bicep_contract():
     assert "preprovision:" in yaml and "./scripts/preprovision.ps1" in yaml
     params = json.loads((ROOT / "infra/azd/main.parameters.json").read_text())
     assert params["parameters"]["cosmosAccountName"]["value"] == "${AZURE_COSMOS_ACCOUNT_NAME}"
+    assert params["parameters"]["createInference"]["value"] == "${AZURE_CREATE_INFERENCE=false}"
     resources = (ROOT / "infra/azd/resources.bicep").read_text()
     assert "param cosmosAccountName string" in resources
     assert "guid(resourceGroup().id" not in resources
@@ -162,6 +211,21 @@ def test_preprovision_and_bicep_contract():
     assert "existing =" in resources
     assert "if (createInference == 'true')" in resources
     assert "createInference == 'true' ? newInference!.outputs.endpoint : inference.properties.endpoint" in resources
+
+
+@pytest.mark.parametrize("missing", ["AZURE_SUBSCRIPTION_ID", "AZURE_LOCATION"])
+def test_inference_preflight_requires_azd_resolved_selection(tmp_path, monkeypatch, missing):
+    values = {"AZURE_ENV_NAME": "offline-one", "AZURE_SUBSCRIPTION_ID": VALID,
+              "AZURE_LOCATION": "uksouth", KEY: VALID}
+    values.pop(missing)
+    monkeypatch.setattr(naming.shutil, "which", lambda _: "/mock/azd")
+    monkeypatch.setattr(naming, "read_environment", lambda *args: dict(values))
+    monkeypatch.setattr(naming, "AzureCliCredential",
+                        lambda: pytest.fail("Do not authenticate against an unresolved target"))
+    monkeypatch.setattr(naming, "azd",
+                        lambda *args: pytest.fail("Do not persist a guessed subscription or inference decision"))
+    with pytest.raises(ValueError, match=missing):
+        naming.prepare_inference(tmp_path)
 
 
 @pytest.mark.parametrize("status, expected", [(200, "false"), (404, "true")])

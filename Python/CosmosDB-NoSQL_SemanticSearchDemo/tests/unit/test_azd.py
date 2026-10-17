@@ -35,6 +35,11 @@ def outputs(environment="offline-one"):
         "COSMOS_URI": f"https://{account}.documents.azure.com:443/",
         "COSMOS_DB_DATABASE": "reranker",
         "AZURE_AI_INFERENCE_ENDPOINT": "https://offline.example.test/",
+        "AZURE_OPENAI_ENDPOINT": f"https://aoai-{account}.openai.azure.com/",
+        "AZURE_OPENAI_EMBEDDING_DEPLOYMENT": "text-embedding-3-small",
+        "AZURE_OPENAI_EMBEDDING_MODEL": "text-embedding-3-small",
+        "AZURE_OPENAI_EMBEDDING_VERSION": "1",
+        "AZURE_OPENAI_API_VERSION": "2024-02-01",
         "COSMOS_DB_CONTAINER_QFLAT": "reranker_dotnet_qflat",
         "COSMOS_DB_CONTAINER_DISKANN": "reranker_dotnet_diskann",
     }
@@ -60,6 +65,8 @@ def test_mocked_azd_command_and_config(tmp_path, monkeypatch):
     assert values["COSMOS_URI"] == outputs()["COSMOS_URI"]
     assert values["COSMOS_DB_DATABASE"] == "reranker"
     assert values["AZURE_AI_INFERENCE_ENDPOINT"] == outputs()["AZURE_AI_INFERENCE_ENDPOINT"]
+    assert values["AZURE_OPENAI_ENDPOINT"] == outputs()["AZURE_OPENAI_ENDPOINT"]
+    assert values["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] == "text-embedding-3-small"
     script = (tmp_path / ".local/azd-env.ps1").read_text()
     assert "$env:COSMOS_URI =" in script
     assert "SetEnvironmentVariable" not in script
@@ -78,6 +85,7 @@ def test_preserves_unrelated_multiline_values_and_switches(tmp_path):
     assert text.startswith(original)
     parsed = dotenv_values(tmp_path / ".env")
     assert parsed["AZURE_OPENAI_API_KEY"] == "a secret"
+    assert parsed["AZURE_OPENAI_AUTH_MODE"] == "entra"
     assert parsed["COSMOS_URI"] == outputs("offline-two")["COSMOS_URI"]
     assert outputs()["COSMOS_URI"] not in text
     assert "offline-two" in (tmp_path / ".local/azd-env.ps1").read_text()
@@ -123,6 +131,8 @@ def test_missing_outputs_fail_without_changes(tmp_path, key):
     ("INFERENCE_ACCOUNT_ID", "/another/account"),
     ("AZURE_ENV_NAME", "../escape"),
     ("COSMOS_DB_CONTAINER_QFLAT", "other"),
+    ("AZURE_OPENAI_ENDPOINT", "https://wrong-account.openai.azure.com/"),
+    ("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "bad\nINJECT=value"),
 ])
 def test_malformed_outputs_fail_before_writing(tmp_path, key, value):
     values = outputs()

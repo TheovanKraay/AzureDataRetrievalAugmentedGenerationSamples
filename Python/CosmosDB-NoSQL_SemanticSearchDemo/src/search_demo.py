@@ -127,7 +127,7 @@ def get_embedding_client():
                "api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
                "max_retries": 2, "timeout": 30.0}
     key = os.getenv("AZURE_OPENAI_API_KEY")
-    if key:
+    if key and os.getenv("AZURE_OPENAI_AUTH_MODE") != "entra":
         options["api_key"] = key
     else:
         options["azure_ad_token_provider"] = get_bearer_token_provider(
@@ -150,7 +150,10 @@ def embed_text(text):
     client = get_embedding_client()
     try:
         response = client.embeddings.create(
-            input=text, model=os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"])
+            input=text, model=os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"],
+            dimensions=DIMENSIONS)
+        if len(response.data) != 1 or response.data[0].index != 0:
+            raise ValueError("Embedding service returned an unexpected response.")
         return validate_vector(response.data[0].embedding)
     except Exception as exc:
         raise SearchError("Embedding request failed. Check the deployment, 1536 dimensions, "
