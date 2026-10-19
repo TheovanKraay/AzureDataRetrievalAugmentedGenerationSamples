@@ -132,6 +132,16 @@ def test_matrix_selector(matrix):
     assert browser.parse_args([]).matrix == "all"
 
 
+def test_razor_uses_named_search_buttons_and_native_radios():
+    source = (ROOT / "scripts/verify_browser.py").read_text(encoding="utf-8")
+    assert 'page.locator("#Mode")' not in source
+    assert 'page.locator("#AllKeywords").select_option' not in source
+    assert 'name="Search", exact=True' not in source
+    assert 'page.locator("#Query")' not in source
+    assert 'name="Similarity search", exact=True).click()' in source
+    assert '"all keywords" if all_words == "true" else "any keywords"), exact=True).check()' in source
+
+
 def test_advanced_completion_assertions_have_explicit_service_deadlines():
     # Playwright's expect timeout is independent of page.set_default_timeout.
     # Inspect the actual call sites so an unconfigured assertion cannot hide

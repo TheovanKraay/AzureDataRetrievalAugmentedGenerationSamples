@@ -158,12 +158,12 @@ def main():
                             continue
                         implementation = "dotnet"
                         page.goto(args.dotnet_url)
-                        page.locator("#Query").fill("SPECTRE spy")
+                        page.get_by_role("textbox", name="Search input", exact=True).fill("SPECTRE spy")
                         page.locator("#Container").select_option(selector)
-                        page.locator("#Mode").select_option(mode)
-                        page.locator("#AllKeywords").select_option(all_words)
+                        page.get_by_role("radio", name=(
+                            "all keywords" if all_words == "true" else "any keywords"), exact=True).check()
                         page.locator("#Rerank").set_checked(enabled)
-                        page.get_by_role("button", name="Search", exact=True).click()
+                        page.get_by_role("button", name=button, exact=True).click()
                         expect(page.locator("#results")).to_contain_text(
                             "original-movies-v1-spectre", timeout=180_000)
                         assert page.locator("#search-error").count() == 0
@@ -235,16 +235,15 @@ def main():
                     expect(page.locator("#advanced-reranking")).not_to_have_attribute("open", "")
                     page.locator("#advanced-reranking summary").click()
                     expect(page.locator("#RerankTopK")).to_be_disabled()
-                    page.locator("#Query").fill("SPECTRE spy")
+                    page.get_by_role("textbox", name="Search input", exact=True).fill("SPECTRE spy")
                     page.locator("#Container").select_option(selector)
-                    page.locator("#Mode").select_option("Vector")
                     page.locator("#Rerank").set_checked(True)
                     page.locator("#DocumentFormat").select_option(format)
                     if format == "json":
                         page.locator("#TargetPaths").select_option(paths)
                     page.locator("#RerankTopK").fill(str(k))
                     page.locator("#ReturnSentenceScores").set_checked(diagnostics)
-                    page.get_by_role("button", name="Search", exact=True).click()
+                    page.get_by_role("button", name="Similarity search", exact=True).click()
                     expect(page.locator("#result-status")).to_have_text("Reranked results", timeout=180_000)
                     assert page.locator("#search-error").count() == 0
                     returned = page.locator("#results tbody tr").count()
@@ -257,8 +256,13 @@ def main():
                     page.screenshot(path=str(private / f"dotnet-{case}.png"))
                     page.locator("#Rerank").set_checked(False)
                     expect(page.locator("#RerankTopK")).to_be_disabled()
-                    page.get_by_role("button", name="Search", exact=True).click()
+                    page.get_by_role("button", name="Similarity search", exact=True).click()
                     expect(page.locator("#result-status")).to_have_text("Retrieval results", timeout=180_000)
+                    expect(page.locator("#DocumentFormat")).to_have_value(format)
+                    expect(page.locator("#TargetPaths")).to_have_value(paths)
+                    expect(page.locator("#RerankTopK")).to_have_value(str(k))
+                    expect(page.locator("#RerankTopK")).to_be_disabled()
+                    expect(page.locator("#ReturnSentenceScores")).to_be_checked(checked=diagnostics)
                     check_result_counts(page.locator("#candidate-count").inner_text(),
                                         page.locator("#results tbody tr").count())
                     assert page.locator(".sentence-scores").count() == 0
