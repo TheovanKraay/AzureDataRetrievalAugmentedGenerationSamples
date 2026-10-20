@@ -61,6 +61,8 @@ def test_advanced_matrix_and_count_contract():
     browser.check_result_counts("Retrieved candidates: 3; returned results: 3", 3)
     with pytest.raises(AssertionError):
         browser.check_result_counts("Retrieved candidates: 3; returned results: 3", 3, 1)
+    with pytest.raises(AssertionError):
+        browser.check_result_counts("Retrieved candidates: 4489; returned results: 4489", 4489)
 
 
 @pytest.mark.parametrize("k", [1, 10, None])
@@ -283,7 +285,7 @@ def test_failure_capture_preserves_original_error(tmp_path, monkeypatch, capture
         browser.main()
 
     page.screenshot.assert_called_once_with(
-        path=str(tmp_path / ".local/validation/original-movies/"
+        path=str(tmp_path / ".local/validation/movielens/"
                  f"failure-python-{case}.png"),
         full_page=True, timeout=10_000)
     instance.close.assert_called_once_with()

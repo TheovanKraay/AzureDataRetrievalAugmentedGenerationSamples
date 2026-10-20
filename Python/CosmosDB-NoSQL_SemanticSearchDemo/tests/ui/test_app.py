@@ -11,33 +11,28 @@ APP = Path(__file__).resolve().parents[2] / "src/app/cosmos-app.py"
 
 DATASET_SOURCE = (
     "https://github.com/TheovanKraay/AzureDataRetrievalAugmentedGenerationSamples/"
-    "blob/feat/standalone-semantic-reranker/Python/CosmosDB-NoSQL_SemanticSearchDemo/"
-    "sample-data/movies.original.json"
+    "blob/7fd162fc633617857f8b8ed2c5b2b92d4d8ef0b6/DataSet/Movies/MovieLens-4489-256D.json"
 )
 
 
-def test_summary_examples_are_grounded_in_bundled_fixture():
-    movies = json.loads((APP.parents[2] / "sample-data/movies.original.json").read_text(
-        encoding="utf-8"))
-    assert len(movies) == 10
-    text_by_id = {movie["id"]: movie["text"].lower() for movie in movies}
-    for suffix, keywords in (
-        ("spectre", ("spectre", "spy")),
-        ("ocean", ("whale", "songs")),
-        ("orbit", ("astronauts", "stranded", "orbital", "station")),
-    ):
-        assert all(word in text_by_id[f"original-movies-v1-{suffix}"] for word in keywords)
+def test_summary_uses_pinned_source_contract_not_smoke_fixture():
+    from seed_movies import SOURCE_ROWS, SOURCE_URL
+    assert SOURCE_ROWS == 4489
+    assert SOURCE_URL.endswith("/DataSet/Movies/MovieLens-4489-256D.json")
+    assert "7fd162fc633617857f8b8ed2c5b2b92d4d8ef0b6" in SOURCE_URL
+    assert "movies.original.json" not in APP.read_text(encoding="utf-8")
 
 
 def assert_dataset_summary(app, container="search_qflat", database="Not configured"):
     text = "\n".join(item.value for item in app.main.markdown)
-    assert "Bundled default dataset" in text
-    assert "10 original movie plots" in text
-    assert f"[View bundled movie source]({DATASET_SOURCE})" in text
+    assert "Default source corpus: MovieLens" in text
+    assert "4,489 source rows" in text
+    assert "10 original movie plots" not in text
+    assert f"[View pinned MovieLens source]({DATASET_SOURCE})" in text
     assert "azd up" in text and "custom data" in text
     assert "not a live inventory" in text
     assert all(example in text for example in (
-        "SPECTRE spy", "whale songs", "astronauts stranded on an orbital station"))
+        "Woody Buzz", "fishing buddies", "toys learning to share a child's affection"))
     config = "\n".join(item.value for item in app.main.text)
     assert f"Configured database: {database}" in config
     assert f"Selected container: {container}" in config

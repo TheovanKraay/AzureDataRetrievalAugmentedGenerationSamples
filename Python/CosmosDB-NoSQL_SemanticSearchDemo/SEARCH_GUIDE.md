@@ -12,7 +12,7 @@ repository root. For standalone Python, run it from this Python sample directory
 Do not deploy both projects into the same environment.
 
 `azd up` installs dependencies, provisions the backend, generates local config,
-and seeds the ten original movies with real Azure OpenAI embeddings.
+and restores all 4,489 MovieLens source rows with real Azure OpenAI embeddings.
 `azd provision` alone does not seed. No new resources are needed for advanced
 reranking, and neither application startup nor searching provisions or writes data.
 
@@ -85,10 +85,10 @@ Do not print tokens, commit generated configuration, or copy endpoints into code
 
 ## Dataset shown on the home screen
 
-The main area keeps a compact **Bundled default dataset** summary above results,
-including after a search or an error. It describes the ten original movie plots
-in [`sample-data/movies.original.json`](sample-data/movies.original.json), with a
-source link to this repository's feature branch, not an unrelated `main` path.
+The main area keeps a compact **Default source corpus: MovieLens** summary above results,
+including after a search or an error. It describes all 4,489 source rows
+in the [pinned original MovieLens file](https://github.com/TheovanKraay/AzureDataRetrievalAugmentedGenerationSamples/blob/7fd162fc633617857f8b8ed2c5b2b92d4d8ef0b6/DataSet/Movies/MovieLens-4489-256D.json).
+The ten-row original-text fixture is smoke/offline test data, not the default.
 There is no preview table or live dataset inspection.
 
 Default `azd up` seeds those movies with real embeddings into the sample
@@ -98,9 +98,12 @@ The database label comes from local configuration; the selected container
 label follows the Index control. Displaying these labels does not connect to
 Cosmos DB or validate container contents.
 
-Try `SPECTRE spy` or `whale songs` with Full text search, or
-`astronauts stranded on an orbital station` with Similarity or Hybrid search.
-These examples describe the bundled plots, not guaranteed results for custom data.
+Try `Woody Buzz` or `fishing buddies` with Full text search, or
+`toys learning to share a child's affection` with Similarity or Hybrid search.
+These examples describe Toy Story and Grumpier Old Men, not guaranteed results for custom data.
+Source movie IDs are not unique: row-indexed IDs preserve every source row.
+Read [the restoration and resume contract](README.md#deploy-and-run) for checksum,
+metadata, cache, full readback and conditional legacy-fixture cleanup details.
 
 ## Follow a request through the code
 
@@ -110,7 +113,7 @@ optionally reranks them. The UI keeps the original index selector, four buttons,
 all/any radio, metadata table, and timing displays.
 
 The two index choices map to `search_qflat` and `search_diskann`. Default `azd up`
-seeds the same bundled movies into both; custom contents can differ.
+seeds the same full source corpus into both; custom contents can differ.
 Retrieval projects `id`, `title`, `text`, and vector
 distance where applicable, not embeddings or Cosmos system properties.
 
@@ -136,7 +139,7 @@ input into whitespace-separated keywords and passes them as parameters to
 
 All means every supplied keyword must match. It is **not** natural-language
 query rewriting. A sentence containing extra words may match fewer documents
-than a short keyword query. Try `SPECTRE spy`, then compare all/any.
+than a short keyword query. Try `Woody Buzz`, then compare all/any.
 Boolean filtering has no relevance-order guarantee and needs no embedding call.
 Title is not part of this retrieval filter.
 
@@ -221,9 +224,10 @@ separate. RU is not a token count or the total price of a search. Azure OpenAI
 embedding tokens and inference usage are separate service costs. Missing Cosmos
 metrics are shown as not reported, not zero.
 
-[`movies.original.json`](sample-data/movies.original.json) contains the actual
-short original dataset. [`seed_movies.py`](src/seed_movies.py) records embedding
-provenance and stable `original-movies-v1-` IDs during the authorized deployment.
+[`seed_movies.py`](src/seed_movies.py) restores the pinned full MovieLens corpus
+and records source/embedding provenance with stable `movielens-4489-v1-` IDs.
+[`movies.original.json`](sample-data/movies.original.json) is only the small
+smoke fixture and exact migration-cleanup reference, never the default corpus.
 Offline synthetic vectors test contracts, not semantic quality.
 
 | Symptom | Check |

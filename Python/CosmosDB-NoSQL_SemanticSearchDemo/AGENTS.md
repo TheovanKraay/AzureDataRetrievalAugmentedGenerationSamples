@@ -1,8 +1,16 @@
 # Agent boundaries
 
-- Default `azd up` bootstraps dependencies and runs the bounded original-movie
+- Default `azd up` bootstraps dependencies and runs the full pinned MovieLens
   real-embedding seed only in `postup`. `postprovision` is config-only.
-  Preserve `original-movies-v1-` ownership, model provenance and unrelated data.
+  Restore all 4,489 source rows, including duplicate movie IDs, with deterministic
+  one-based row IDs in `movielens-4489-v1-`. Retain source movie ID and metadata.
+  Enforce pinned raw bytes/hash/count. Discard source 256-dimensional vectors;
+  generate and cache real 1536-dimensional embeddings under ignored `.local/`.
+  After ALL targets pass complete readback, the explicit hook cleanup flag may
+  delete ONLY the ten exact unchanged `original-movies-v1-` fixtures, matching
+  full source data, ownership and provenance, using conditional etags. Never
+  delete by prefix or alter unrelated/changed records. This narrowly supersedes
+  the old ten-row/no-deletes default. The tiny fixture is only smoke/offline data.
   `pwsh ./scripts/start.ps1` loads generated config and supervises the local app;
   startup has no writes. See README.md for this default, README.manual.md for
   the older synthetic integration workflow.
@@ -42,8 +50,8 @@
 - Never commit `.env`, virtual environments, private endpoints, subscription/account
   identifiers, tokens, private feeds, service logs or internal attachments.
 - Legacy integration fixtures use original MIT-licensed text and deterministic
-  vectors; they do not measure embedding quality. The default original-movie
-  dataset uses real embeddings from the deployed model. Keep both namespaces stable.
+  vectors; they do not measure embedding quality. Default MovieLens restoration
+  uses real embeddings from the deployed model. Keep namespaces stable.
 - Test first. Do not claim live verification from mocks or HTTP health.
 
 ## Offline/manual development commands from the sample root

@@ -44,6 +44,7 @@ def test_lifecycle_separates_configuration_and_seed():
     assert "bootstrap.ps1" in config
     seed = (ROOT / "scripts/postup.ps1").read_text()
     assert "--confirm-write" in seed and "seed_movies.py" in seed
+    assert "--cleanup-original-fixtures" in seed
     launcher = (ROOT / "scripts/start.ps1").read_text()
     assert "seed_movies" not in launcher and "upsert" not in launcher
     assert ". $config" in launcher and "$child.Kill($true)" in launcher

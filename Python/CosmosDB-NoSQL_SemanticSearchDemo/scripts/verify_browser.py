@@ -23,7 +23,7 @@ def check_result_counts(text, returned, k=None):
     match = re.search(r"Retrieved candidates: (\d+); returned results: (\d+)", text)
     assert match, "Candidate/returned count display missing."
     candidates, displayed = map(int, match.groups())
-    assert candidates > 0 and displayed == returned
+    assert 0 < candidates <= 10 and displayed == returned
     assert returned == (candidates if k is None else min(k, candidates))
 
 
@@ -113,7 +113,7 @@ def main():
         raise SystemExit("Set RUN_LIVE_TESTS=1. This browser matrix calls real Azure services.")
     from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
 
-    private = Path(__file__).resolve().parents[1] / ".local/validation/original-movies"
+    private = Path(__file__).resolve().parents[1] / ".local/validation/movielens"
     private.mkdir(parents=True, exist_ok=True)
     modes = [
         ("Vector", "Similarity search", "true"),
@@ -137,17 +137,21 @@ def main():
                         case = f"{selector}-{mode}-{all_words}-rerank-{enabled}"
                         implementation = "python"
                         page.goto(args.python_url)
+                        expect(page.get_by_text("Default source corpus: MovieLens", exact=True)).to_be_visible()
+                        expect(page.locator("body")).to_contain_text("4,489 source rows")
+                        expected_id = ("movielens-4489-v1-" if mode == "FullText" and all_words == "false"
+                                       else "movielens-4489-v1-0001-862")
                         page.get_by_role("combobox", name="Index", exact=True).click()
                         page.get_by_role("option", name=index, exact=True).click()
                         query = page.get_by_role("textbox", name="Search input", exact=True)
-                        query.fill("SPECTRE spy")
+                        query.fill("Woody Buzz")
                         query.press("Enter")
                         set_streamlit_checked(page, "checkbox", "Use Semantic Reranker", enabled)
                         set_streamlit_checked(page, "radio",
                                               "all keywords" if all_words == "true" else "any keywords", True)
                         page.get_by_role("button", name=button, exact=True).click()
                         table = page.locator("table")
-                        expect(table).to_contain_text("original-movies-v1-spectre", timeout=180_000)
+                        expect(table).to_contain_text(expected_id, timeout=180_000)
                         expect(page.get_by_text(
                             "Semantic reranking: " + ("✓ Applied" if enabled else "✗ Not applied"),
                             exact=True)).to_be_visible()
@@ -158,14 +162,15 @@ def main():
                             continue
                         implementation = "dotnet"
                         page.goto(args.dotnet_url)
-                        page.get_by_role("textbox", name="Search input", exact=True).fill("SPECTRE spy")
+                        expect(page.locator("#dataset-summary")).to_contain_text("4,489 source rows")
+                        page.get_by_role("textbox", name="Search input", exact=True).fill("Woody Buzz")
                         page.locator("#Container").select_option(selector)
                         page.get_by_role("radio", name=(
                             "all keywords" if all_words == "true" else "any keywords"), exact=True).check()
                         page.locator("#Rerank").set_checked(enabled)
                         page.get_by_role("button", name=button, exact=True).click()
                         expect(page.locator("#results")).to_contain_text(
-                            "original-movies-v1-spectre", timeout=180_000)
+                            expected_id, timeout=180_000)
                         assert page.locator("#search-error").count() == 0
                         expect(page.locator("#result-status")).to_have_text(
                             "Reranked results" if enabled else "Retrieval results")
@@ -187,7 +192,7 @@ def main():
                     expect(page.get_by_role("spinbutton", name="Rerank result limit", exact=True)).to_be_disabled()
                     set_streamlit_selected(page, "Index", index)
                     query = page.get_by_role("textbox", name="Search input", exact=True)
-                    query.fill("SPECTRE spy")
+                    query.fill("Woody Buzz")
                     query.press("Enter")
                     expect(page.get_by_role("button", name="Similarity search", exact=True)).to_be_enabled()
                     wait_streamlit_ready(page)
@@ -235,7 +240,7 @@ def main():
                     expect(page.locator("#advanced-reranking")).not_to_have_attribute("open", "")
                     page.locator("#advanced-reranking summary").click()
                     expect(page.locator("#RerankTopK")).to_be_disabled()
-                    page.get_by_role("textbox", name="Search input", exact=True).fill("SPECTRE spy")
+                    page.get_by_role("textbox", name="Search input", exact=True).fill("Woody Buzz")
                     page.locator("#Container").select_option(selector)
                     page.locator("#Rerank").set_checked(True)
                     page.locator("#DocumentFormat").select_option(format)

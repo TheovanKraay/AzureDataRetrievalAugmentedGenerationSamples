@@ -4,7 +4,7 @@ This path is separate from the existing-resource setup in `../README.md`.
 Run azd from the directory containing the selected `azure.yaml`, not this
 infra directory. No web app, App Service plan, container image or cloud
 application deployment is included. Use `azd up` for dependency bootstrap,
-backends, private config and bounded original-movie seeding with real embeddings.
+backends, private config and full pinned MovieLens restoration with real embeddings.
 `azd provision` deliberately performs no seeding. Azure OpenAI is now included.
 
 | Hook | Responsibility |
@@ -12,7 +12,7 @@ backends, private config and bounded original-movie seeding with real embeddings
 | `preup` | Bootstrap dependencies and persist/reuse `AZURE_COSMOS_ACCOUNT_NAME`; reset `AZURE_CREATE_INFERENCE=false` without credentials or Azure requests. |
 | `preprovision` | Mandatory authenticated inference GET using azd's resolved subscription/location; only HTTP 404 authorizes creation. |
 | `postprovision` | Generate private local configuration, including the deployed embedding settings. |
-| `postup` | Batch real embeddings and upsert the bounded `original-movies-v1-` dataset, without deleting unrelated records. |
+| `postup` | Restore all 4,489 pinned MovieLens source rows with cached real 1536-dimensional embeddings; verify every target before conditionally removing only the exact ten unchanged legacy fixtures. Never alter unrelated records. |
 
 ## All prerequisites
 

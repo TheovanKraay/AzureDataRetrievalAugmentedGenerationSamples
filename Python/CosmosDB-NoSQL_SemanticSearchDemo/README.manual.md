@@ -1,7 +1,7 @@
 # Semantic search and standalone reranking
 
 > Advanced legacy/manual workflow. Use [README.md](README.md) for automatic
-> real embeddings and original movie seeding. Synthetic integration vectors
+> real embeddings and full pinned MovieLens restoration. Synthetic integration vectors
 > below are not the default search dataset.
 
 A Streamlit movie-search sample using Azure Cosmos DB for NoSQL retrieval and
@@ -63,7 +63,7 @@ canonical lowercase GUID starting **a-f** for both accounts. It reuses a valid
 existing account output and keeps the persisted GUID on reprovision. Other
 existing-resource accounts are not referenced. Preserve ignored azd state.
 There are no hosted application services. This manual workflow uses `azd provision`
-without automatic seeding; the default `azd up` workflow seeds the original dataset.
+without automatic seeding; the default `azd up` restores the full MovieLens corpus.
 
 The postprovision hook automatically merges the required values into ignored
 `.env` and emits ignored `.local/azd-env.ps1`. It preserves unrelated `.env`
