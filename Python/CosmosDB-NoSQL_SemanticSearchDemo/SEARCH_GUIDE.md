@@ -83,6 +83,25 @@ shell. A browser refresh alone does not reset those clients. Follow the README
 environment-switching procedure before restarting when changing azd environments.
 Do not print tokens, commit generated configuration, or copy endpoints into code.
 
+## Dataset shown on the home screen
+
+The main area keeps a compact **Bundled default dataset** summary above results,
+including after a search or an error. It describes the ten original movie plots
+in [`sample-data/movies.original.json`](sample-data/movies.original.json), with a
+source link to this repository's feature branch, not an unrelated `main` path.
+There is no preview table or live dataset inspection.
+
+Default `azd up` seeds those movies with real embeddings into the sample
+containers. The summary is not evidence of what an arbitrary configured
+container contains. With custom data, use searches suited to your documents.
+The database label comes from local configuration; the selected container
+label follows the Index control. Displaying these labels does not connect to
+Cosmos DB or validate container contents.
+
+Try `SPECTRE spy` or `whale songs` with Full text search, or
+`astronauts stranded on an orbital station` with Similarity or Hybrid search.
+These examples describe the bundled plots, not guaranteed results for custom data.
+
 ## Follow a request through the code
 
 [`run_search`](src/app/cosmos-app.py) clears stale success before calling
@@ -90,8 +109,9 @@ Do not print tokens, commit generated configuration, or copy endpoints into code
 optionally reranks them. The UI keeps the original index selector, four buttons,
 all/any radio, metadata table, and timing displays.
 
-The two index choices map to `search_qflat` and `search_diskann`. Both containers
-hold the same dataset. Retrieval projects `id`, `title`, `text`, and vector
+The two index choices map to `search_qflat` and `search_diskann`. Default `azd up`
+seeds the same bundled movies into both; custom contents can differ.
+Retrieval projects `id`, `title`, `text`, and vector
 distance where applicable, not embeddings or Cosmos system properties.
 
 ### Embeddings and vector similarity

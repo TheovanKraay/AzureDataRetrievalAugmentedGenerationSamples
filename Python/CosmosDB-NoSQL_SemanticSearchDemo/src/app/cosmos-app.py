@@ -1,6 +1,7 @@
 """Original Streamlit controls backed by standalone Azure Data AI reranking."""
 
 from pathlib import Path
+import os
 import sys
 
 import pandas as pd
@@ -21,6 +22,11 @@ TARGET_FIELDS = {
     "Title only": ("title",),
     "Description only": ("text",),
 }
+DATASET_SOURCE = (
+    "https://github.com/TheovanKraay/AzureDataRetrievalAugmentedGenerationSamples/"
+    "blob/feat/standalone-semantic-reranker/Python/CosmosDB-NoSQL_SemanticSearchDemo/"
+    "sample-data/movies.original.json"
+)
 
 
 def run_search(mode):
@@ -58,7 +64,7 @@ def run_search(mode):
 
 with st.sidebar:
     st.selectbox("Index", options=list(INDEX_NAMES), index=0, key="index_selection")
-    st.text_input("Search input", placeholder="James Bond", key="user_query")
+    st.text_input("Search input", placeholder="SPECTRE spy", key="user_query")
     st.checkbox("Use Semantic Reranker", key="use_reranker",
                 help="Apply semantic reranking with the standalone Azure Data AI inference service")
     with st.expander("Advanced reranking", expanded=False):
@@ -90,6 +96,25 @@ with st.sidebar:
 st.title("Azure Cosmos DB - Semantic Search Demo")
 st.write("Showcasing vector search, full text search, text ranking, hybrid search, "
          "and semantic reranking capabilities.")
+with st.container(border=True):
+    st.markdown("**Bundled default dataset**")
+    st.markdown(
+        "10 original movie plots spanning spy thrillers, space rescue, ocean exploration, "
+        "romance, and family adventures. "
+        f"[View bundled movie source]({DATASET_SOURCE})")
+    st.markdown(
+        "Default `azd up` seeds these movies with real embeddings into the sample containers. "
+        "With custom data, use searches suited to your documents. "
+        "This describes the bundled fixture, not a live inventory of the selected container.")
+    st.markdown(
+        "**Example searches for the bundled movies:** "
+        "Full text: `SPECTRE spy` or `whale songs`. "
+        "Similarity / hybrid: `astronauts stranded on an orbital station`.")
+    # Configuration only: do not resolve clients or inspect the container on a rerun.
+    demo.load_environment()
+    database = os.getenv("COSMOS_DB_DATABASE", "").strip() or "Not configured"
+    st.text(f"Configured database: {database} | "
+            f"Selected container: {INDEX_NAMES[st.session_state.index_selection]}")
 st.write("---")
 
 if st.session_state.get("search_error"):

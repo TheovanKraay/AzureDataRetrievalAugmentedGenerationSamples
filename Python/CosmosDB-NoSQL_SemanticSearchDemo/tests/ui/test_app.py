@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -7,6 +8,56 @@ from streamlit.testing.v1 import AppTest
 import search_demo
 
 APP = Path(__file__).resolve().parents[2] / "src/app/cosmos-app.py"
+
+DATASET_SOURCE = (
+    "https://github.com/TheovanKraay/AzureDataRetrievalAugmentedGenerationSamples/"
+    "blob/feat/standalone-semantic-reranker/Python/CosmosDB-NoSQL_SemanticSearchDemo/"
+    "sample-data/movies.original.json"
+)
+
+
+def test_summary_examples_are_grounded_in_bundled_fixture():
+    movies = json.loads((APP.parents[2] / "sample-data/movies.original.json").read_text(
+        encoding="utf-8"))
+    assert len(movies) == 10
+    text_by_id = {movie["id"]: movie["text"].lower() for movie in movies}
+    for suffix, keywords in (
+        ("spectre", ("spectre", "spy")),
+        ("ocean", ("whale", "songs")),
+        ("orbit", ("astronauts", "stranded", "orbital", "station")),
+    ):
+        assert all(word in text_by_id[f"original-movies-v1-{suffix}"] for word in keywords)
+
+
+def assert_dataset_summary(app, container="search_qflat", database="Not configured"):
+    text = "\n".join(item.value for item in app.main.markdown)
+    assert "Bundled default dataset" in text
+    assert "10 original movie plots" in text
+    assert f"[View bundled movie source]({DATASET_SOURCE})" in text
+    assert "azd up" in text and "custom data" in text
+    assert "not a live inventory" in text
+    assert all(example in text for example in (
+        "SPECTRE spy", "whale songs", "astronauts stranded on an orbital station"))
+    config = "\n".join(item.value for item in app.main.text)
+    assert f"Configured database: {database}" in config
+    assert f"Selected container: {container}" in config
+
+
+def test_dataset_summary_uses_config_only_and_tracks_selection(monkeypatch):
+    monkeypatch.setenv("COSMOS_DB_DATABASE", "custom-movies")
+    monkeypatch.setenv("COSMOS_URI", "https://private-endpoint.invalid")
+    for name in ("get_container", "get_inference_client", "get_cosmos_client",
+                 "get_credential", "get_embedding_client", "embed_text"):
+        monkeypatch.setattr(search_demo, name, Mock(side_effect=AssertionError(name)))
+    app = AppTest.from_file(str(APP)).run()
+    assert not app.exception
+    assert_dataset_summary(app, database="custom-movies")
+    assert len(app.table) == 0
+    app.selectbox(key="index_selection").select("DiskANN & Full Text Search Index").run()
+    assert not app.exception
+    assert_dataset_summary(app, container="search_diskann", database="custom-movies")
+    assert "private-endpoint" not in "\n".join(
+        item.value for item in [*app.main.markdown, *app.main.text])
 
 
 def fake_services(monkeypatch):
@@ -42,6 +93,8 @@ def test_startup_does_not_create_clients_or_write(monkeypatch):
     assert app.selectbox(key="rerank_fields").disabled
     assert app.number_input(key="rerank_top_k").disabled
     assert app.checkbox(key="sentence_diagnostics").disabled
+    assert_dataset_summary(app)
+    assert len(app.table) == 0
 
 
 @pytest.mark.parametrize("button", ["location_search", "full_text_search",
@@ -60,6 +113,7 @@ def test_ui_all_buttons(monkeypatch, button, enabled):
     assert ("rerank_score" in app.table[0].value.columns) is enabled
     assert inference.semantic_rerank.call_count == int(enabled)
     container.query_items.assert_called_once()
+    assert_dataset_summary(app)
 
 
 def test_visible_error_no_stale_success(monkeypatch):
@@ -75,6 +129,7 @@ def test_visible_error_no_stale_success(monkeypatch):
     assert len(app.error) == 1 and "Reranking failed" in app.error[0].value
     assert "private endpoint" not in app.error[0].value
     assert len(app.table) == 0
+    assert_dataset_summary(app)
 
 
 def test_ui_any_keywords_and_diskann_selection(monkeypatch):
@@ -89,6 +144,7 @@ def test_ui_any_keywords_and_diskann_selection(monkeypatch):
     assert not app.exception and not app.error
     get_container.assert_called_once_with("search_diskann")
     assert "FullTextContainsAny" in container.query_items.call_args.args[0]
+    assert_dataset_summary(app, container="search_diskann")
 
 
 def test_missing_openai_visible(monkeypatch):
