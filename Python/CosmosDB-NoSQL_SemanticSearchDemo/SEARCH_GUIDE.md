@@ -216,6 +216,39 @@ Malformed score cardinality, duplicate/out-of-range document indices, missing or
 nonfinite scores, and malformed requested sentence diagnostics fail closed.
 There is no successful-looking fallback to retrieval after a reranker error.
 
+### Exception diagnostics and privacy
+
+The UI logs each failed search once with Python's standard `logging` exception
+traceback in the developer-owned Streamlit terminal. Embedding, retrieval and
+reranking wrappers retain the original exception as `__cause__` using
+`raise ... from exc`. Only the sample's deliberately safe `SearchError` messages
+are shown in the browser. Other exceptions, including SDK `ValueError`s, receive
+a fixed friendly message. Failed searches clear previous results and timings;
+table construction must succeed before a new result is saved.
+
+Loader and setup CLI failure summaries keep fixed guidance and, where available,
+the existing sanitized `error_details()` fields (category, exception type, integer
+HTTP status and hint), never arbitrary exception text. The original exception
+and traceback are logged to the developer terminal instead. Legacy loader write
+failures remain failed counts with a nonzero CLI exit, not successful writes.
+The MovieLens loader rethrows the original first failure after its pending batch
+settles and logs additional batch failures. Receipt/screenshot failures retain
+their own local diagnostics without replacing the original operation failure.
+CLI subprocess wrappers chain `CalledProcessError`, retaining exit code, command
+and captured stdout/stderr on the cause for local debugging.
+
+**Treat terminal stderr/logs and ignored `.local/` receipts/screenshots as private.**
+Original exception chains may contain sensitive SDK details, URLs, credentials,
+query/document content or local paths. Never commit or share raw logs, receipts
+or screenshots, and do not route these logs to a browser or public collector.
+If saving diagnostics, use ignored `.local/` only; redact and review any excerpt
+before sharing. No SDK HTTP/body logging is enabled by these changes.
+
+Intentional fallbacks remain narrow: malformed optional server timing is ignored,
+malformed retry-delay headers use the existing bounded backoff, and an explicit
+point-read not-found response represents absence. These do not convert failed
+searches or writes into success. Retry policies and limits are unchanged.
+
 ## Costs, data, and troubleshooting
 
 Cosmos RU and server metrics come from retrieval response hooks; all pages are

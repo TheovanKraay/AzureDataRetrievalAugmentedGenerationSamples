@@ -2,12 +2,14 @@
 
 import argparse
 import json
+import logging
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 
 CONTAINERS = {"search_qflat": "quantizedFlat", "search_diskann": "diskANN"}
+logger = logging.getLogger(__name__)
 
 
 def container_resource(name):
@@ -74,8 +76,11 @@ def az_json(*args):
                             capture_output=True, text=True, check=False, timeout=300)
     if result.returncode:
         # Do not echo CLI error output: it may contain private resource identifiers.
-        raise RuntimeError("Azure CLI operation failed. Check subscription, permissions, "
-                           "account capabilities and region support.")
+        try:
+            result.check_returncode()
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError("Azure CLI operation failed. Check subscription, permissions, "
+                               "account capabilities and region support.") from exc
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
@@ -124,8 +129,10 @@ def main(argv=None):
         setup_containers(args.subscription, args.resource_group, args.account,
                          args.database, args.confirm_create)
         return 0
-    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
-        print(f"Setup failed: {exc}")
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired):
+        logger.exception("Container setup failed.")
+        print("Setup failed. Check explicit targets, container policies, Azure CLI "
+              "permissions and network access.")
         return 1
 
 

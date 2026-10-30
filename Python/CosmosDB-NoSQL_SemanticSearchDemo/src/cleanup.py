@@ -1,8 +1,11 @@
 """Opt-in control-plane deletion of one explicitly selected sample container."""
 
 import argparse
+import logging
 
 from container_setup import CONTAINERS, az_json
+
+logger = logging.getLogger(__name__)
 
 
 def main(argv=None):
@@ -28,6 +31,7 @@ def main(argv=None):
         print("Selected sample container deleted.")
         return 0
     except Exception:
+        logger.exception("Container deletion failed.")
         print("Deletion failed. Check the explicit target and control-plane permissions.")
         return 1
 

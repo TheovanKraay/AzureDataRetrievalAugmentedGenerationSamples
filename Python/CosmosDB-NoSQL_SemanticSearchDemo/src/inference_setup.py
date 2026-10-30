@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import time
 from urllib.parse import quote, urlsplit
 
@@ -9,6 +10,7 @@ from container_setup import az_json
 
 API_VERSION = "2026-08-01-preview"
 ROLE_ID = "6c74a7c5-4a87-40f9-bb03-61e49aecbc78"
+logger = logging.getLogger(__name__)
 
 
 class ArmClient:
@@ -156,10 +158,11 @@ def main(argv=None):
         return 0
     except Exception as exc:
         from search_demo import error_details
+        logger.exception("Inference setup failed.")
         print(json.dumps({"error": "Inference setup did not complete.",
                           "diagnostic": error_details(exc),
-                          "hint": str(exc) if isinstance(exc, (ValueError, RuntimeError))
-                          else "Inspect Azure CLI authentication, provider registration and network access."}))
+                          "hint": "Inspect explicit targets, Azure CLI authentication, "
+                          "provider registration and network access."}))
         return 1
 
 

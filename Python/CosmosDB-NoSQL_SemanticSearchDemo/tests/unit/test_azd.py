@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 from types import SimpleNamespace
 import uuid
 
@@ -225,7 +226,7 @@ def test_guid_shape_and_template_uses_persisted_name():
 
 def test_azd_failure_or_invalid_json_is_not_absence(tmp_path, monkeypatch):
     monkeypatch.setattr(config.shutil, "which", lambda name: "/mock/azd")
-    for result in (SimpleNamespace(returncode=1, stdout=""),
+    for result in (subprocess.CompletedProcess(["mock-azd"], 1, stdout="", stderr=""),
                    SimpleNamespace(returncode=0, stdout="not json")):
         monkeypatch.setattr(config.subprocess, "run", lambda *a, **k: result)
         with pytest.raises((ValueError, RuntimeError)):

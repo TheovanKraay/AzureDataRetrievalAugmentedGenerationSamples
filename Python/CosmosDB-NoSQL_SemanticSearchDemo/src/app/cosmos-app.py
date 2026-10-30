@@ -1,6 +1,7 @@
 """Original Streamlit controls backed by standalone Azure Data AI reranking."""
 
 from pathlib import Path
+import logging
 import os
 import sys
 
@@ -9,6 +10,8 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import search_demo as demo
+
+logger = logging.getLogger("search_demo.ui")
 
 st.set_page_config(page_title="Azure Cosmos DB Semantic Search Demo", layout="wide",
                    initial_sidebar_state="expanded")
@@ -50,15 +53,20 @@ def run_search(mode):
             use_reranker=enabled,
             search_type=st.session_state.get("full_text_search_type", "all keywords"),
             rerank_options=options)
-        st.session_state.search_result = result
-        st.session_state.suggested_listings = pd.DataFrame(
+        listings = pd.DataFrame(
             [{k: v for k, v in row.items() if k != "sentence_scores"} for row in result.rows])
-    except (demo.SearchError, ValueError) as exc:
-        st.session_state.search_error = str(exc)
-    except Exception:
+        st.session_state.search_result = result
+        st.session_state.suggested_listings = listings
+    except Exception as exc:
+        # Private developer terminal only. SDK tracebacks may contain sensitive details.
+        logger.exception("Search request failed.")
+        st.session_state.pop("search_result", None)
+        st.session_state.pop("suggested_listings", None)
+        # Only our SearchError contract is UI-safe, not arbitrary SDK ValueErrors.
         st.session_state.search_error = (
-            "Search could not start. Check environment settings, Azure CLI/managed identity, "
-            "resource permissions and network access.")
+            str(exc) if isinstance(exc, demo.SearchError) else
+            "Search could not complete. Check search input, reranking options, environment "
+            "settings, Azure CLI/managed identity, resource permissions and network access.")
 
 
 with st.sidebar:

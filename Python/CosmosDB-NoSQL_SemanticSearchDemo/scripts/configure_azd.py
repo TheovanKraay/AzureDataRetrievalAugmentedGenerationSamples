@@ -7,6 +7,7 @@ Requires the sample's python-dotenv dependency to preserve complete .env binding
 import argparse
 import io
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -17,6 +18,8 @@ from urllib.parse import urlsplit
 import uuid
 
 from dotenv.parser import parse_stream
+
+logger = logging.getLogger(__name__)
 
 PYTHON_KEYS = (
     "COSMOS_URI", "COSMOS_DB_DATABASE", "AZURE_AI_INFERENCE_ENDPOINT",
@@ -40,11 +43,14 @@ def read_outputs(project_root):
         shell=False,
     )
     if result.returncode:
-        raise RuntimeError("azd env get-values failed. Select a provisioned environment.")
+        try:
+            result.check_returncode()
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError("azd env get-values failed. Select a provisioned environment.") from exc
     try:
         return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        raise ValueError("azd outputs are not valid JSON.") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError("azd outputs are not valid JSON.") from exc
 
 
 def validate_outputs(values, include_dotnet):
@@ -68,8 +74,8 @@ def validate_outputs(values, include_dotnet):
     try:
         canonical = str(uuid.UUID(account))
         subscription = str(uuid.UUID(values["AZURE_SUBSCRIPTION_ID"]))
-    except (ValueError, AttributeError):
-        raise ValueError("Account/subscription outputs must be canonical UUIDs.") from None
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("Account/subscription outputs must be canonical UUIDs.") from exc
     if (account != canonical or account[0] not in "abcdef"
             or values["AZURE_SUBSCRIPTION_ID"].lower() != subscription):
         raise ValueError("Account name output must be a lowercase canonical UUID starting a-f.")
@@ -223,9 +229,8 @@ def main():
     try:
         configure(args.project_root, args.include_dotnet)
     except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
-        # Do not publish subprocess output or private configuration values.
-        if isinstance(error, (ValueError, RuntimeError)) and not isinstance(error, json.JSONDecodeError):
-            print(str(error))
+        # Tracebacks are private terminal diagnostics, never public configuration output.
+        logger.exception("Local azd configuration failed.")
         print(f"Local azd configuration failed ({type(error).__name__}). "
               "Check selected environment outputs, .env syntax and file access. "
               "No calling-shell settings were changed.")

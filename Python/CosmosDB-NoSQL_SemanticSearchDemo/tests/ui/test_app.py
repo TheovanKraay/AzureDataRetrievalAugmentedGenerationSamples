@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -125,6 +126,59 @@ def test_visible_error_no_stale_success(monkeypatch):
     assert "private endpoint" not in app.error[0].value
     assert len(app.table) == 0
     assert_dataset_summary(app)
+
+
+@pytest.mark.parametrize("phase", ["container", "embedding-client", "retrieval",
+                                  "inference-client", "reranking", "table"])
+@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+def test_failure_logged_once_with_original_traceback_not_browser(
+        monkeypatch, caplog, phase, error_type):
+    import pandas as pd
+
+    embed_text = search_demo.embed_text
+    container, inference = fake_services(monkeypatch)
+    app = AppTest.from_file(str(APP)).run()
+    app.text_input(key="user_query").set_value("rescue").run()
+    app.button(key="full_text_ranking").click().run()
+    assert len(app.table) == 1
+    private = "https://private.invalid/?key=secret query=document-content"
+    original = error_type(private)
+    failure = Mock(side_effect=original)
+    button = "full_text_ranking"
+    if phase == "container":
+        monkeypatch.setattr(search_demo, "get_container", failure)
+    elif phase == "embedding-client":
+        monkeypatch.setattr(search_demo, "embed_text", embed_text)
+        monkeypatch.setattr(search_demo, "get_embedding_client", failure)
+        button = "location_search"
+    elif phase == "retrieval":
+        container.query_items = failure
+    elif phase == "inference-client":
+        monkeypatch.setattr(search_demo, "get_inference_client", failure)
+        app.checkbox(key="use_reranker").check().run()
+    elif phase == "reranking":
+        inference.semantic_rerank = failure
+        app.checkbox(key="use_reranker").check().run()
+    else:
+        monkeypatch.setattr(pd, "DataFrame", failure)
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        app.button(key=button).click().run()
+        app.run()  # Rendering again must not log the same failure twice.
+    failure.assert_called_once()
+    assert not app.exception and len(app.error) == 1 and not app.table
+    assert "search_result" not in app.session_state
+    assert "suggested_listings" not in app.session_state
+    assert private not in app.error[0].value
+    visible = "\n".join(item.value for item in [*app.main.markdown, *app.main.text])
+    assert private not in visible and "Executed query:" not in visible
+    assert "Applied" not in visible and "execution time:" not in visible
+    records = [record for record in caplog.records if record.exc_info]
+    assert len(records) == 1
+    logged = records[0].exc_info[1]
+    assert (logged.__cause__ if isinstance(logged, search_demo.SearchError) else logged) is original
+    assert records[0].exc_info[2] is not None
+    assert private in logging.Formatter().format(records[0])
 
 
 def test_ui_any_keywords_and_diskann_selection(monkeypatch):

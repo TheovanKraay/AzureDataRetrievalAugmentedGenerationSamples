@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 from pathlib import Path
 import re
 import shutil
@@ -12,6 +13,7 @@ from azure.identity import AzureCliCredential
 
 NAME_KEY = "AZURE_COSMOS_ACCOUNT_NAME"
 NAME_PATTERN = r"[a-f][0-9a-f]{7}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+logger = logging.getLogger(__name__)
 
 
 def valid_name(value):
@@ -63,15 +65,18 @@ def azd(executable, root, arguments):
         check=False, timeout=120, shell=False,
     )
     if result.returncode:
-        raise RuntimeError("azd environment operation failed; could not read or persist the account name.")
+        try:
+            result.check_returncode()
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError("azd environment operation failed; could not read or persist the account name.") from exc
     return result.stdout
 
 
 def read_environment(executable, root):
     try:
         values = json.loads(azd(executable, root, ["env", "get-values", "--output", "json"]))
-    except json.JSONDecodeError:
-        raise ValueError("azd environment output is not valid JSON.") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError("azd environment output is not valid JSON.") from exc
     if not isinstance(values, dict):
         raise ValueError("azd environment output must be an object.")
     environment = values.get("AZURE_ENV_NAME")
@@ -131,8 +136,8 @@ def prepare_inference(project_root):
         raise ValueError("Persist a valid account UUID before checking inference.")
     try:
         subscription = str(uuid.UUID(values["AZURE_SUBSCRIPTION_ID"]))
-    except (KeyError, ValueError, TypeError):
-        raise ValueError("AZURE_SUBSCRIPTION_ID must be a UUID.") from None
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ValueError("AZURE_SUBSCRIPTION_ID must be a UUID.") from exc
     location = values.get("AZURE_LOCATION")
     if location not in ("uksouth", "eastus2", "westus3"):
         raise ValueError("Select a supported AZURE_LOCATION before provisioning.")
@@ -178,10 +183,10 @@ def main():
         bootstrap(args.project_root, args.regenerate_invalid_name)
         if not args.bootstrap_only:
             decision = prepare_inference(args.project_root)
-    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
-        if isinstance(error, (ValueError, RuntimeError)):
-            print(str(error))
-        print("Naming preflight failed. No Azure resources were created by this helper.")
+    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
+        logger.exception("Naming preflight failed.")
+        print("Naming preflight failed. Check environment outputs, Azure CLI permissions "
+              "and network access. No Azure resources were created by this helper.")
         return 1
     if args.bootstrap_only:
         print("Local bootstrap complete. UUID persisted/reused; inference creation disabled pending preprovision authorization.")

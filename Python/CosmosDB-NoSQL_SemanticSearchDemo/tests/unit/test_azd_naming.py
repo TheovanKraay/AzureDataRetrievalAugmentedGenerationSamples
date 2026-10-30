@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import uuid
 import sys
+import subprocess
 
 import pytest
 
@@ -164,7 +165,7 @@ def test_failed_persistence_fails_before_arm(tmp_path, monkeypatch):
 
     def run(args, **kwargs):
         if args[1:3] == ["env", "set"]:
-            return SimpleNamespace(returncode=1, stdout="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
         return SimpleNamespace(returncode=0, stdout='{"AZURE_ENV_NAME":"offline-one"}')
 
     monkeypatch.setattr(naming.subprocess, "run", run)

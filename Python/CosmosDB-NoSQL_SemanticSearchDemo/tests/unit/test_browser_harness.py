@@ -262,7 +262,8 @@ def test_wrong_selected_value_still_fails(monkeypatch):
     ("advanced", "advanced-qflat-text-title,text-1-sentences-False"),
 ])
 @pytest.mark.parametrize("capture_fails", [False, True])
-def test_failure_capture_preserves_original_error(tmp_path, monkeypatch, capture_fails, matrix, case):
+def test_failure_capture_preserves_original_error(
+        tmp_path, monkeypatch, caplog, capture_fails, matrix, case):
     class BrowserError(Exception):
         pass
 
@@ -272,18 +273,26 @@ def test_failure_capture_preserves_original_error(tmp_path, monkeypatch, capture
     api.sync_playwright = MagicMock()
     instance = api.sync_playwright.return_value.__enter__.return_value.chromium.launch.return_value
     page = instance.new_page.return_value
-    page.goto.side_effect = AssertionError("original browser failure")
+    original = AssertionError("original browser failure")
+    page.goto.side_effect = original
+    capture_error = BrowserError("capture failed")
     if capture_fails:
-        page.screenshot.side_effect = BrowserError("capture failed")
+        page.screenshot.side_effect = capture_error
     monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
     monkeypatch.setitem(sys.modules, "playwright.sync_api", api)
     monkeypatch.setattr(browser, "__file__", str(tmp_path / "scripts/verify_browser.py"))
     monkeypatch.setattr(sys, "argv", ["verify_browser.py", "--matrix", matrix])
     monkeypatch.setenv("RUN_LIVE_TESTS", "1")
 
-    with pytest.raises(AssertionError, match="original browser failure"):
+    with pytest.raises(AssertionError, match="original browser failure") as caught:
         browser.main()
 
+    assert caught.value is original
+    records = [record for record in caplog.records if record.exc_info]
+    assert len(records) == int(capture_fails)
+    if capture_fails:
+        assert records[0].exc_info[1] is capture_error
+        assert records[0].exc_info[2] is not None
     page.screenshot.assert_called_once_with(
         path=str(tmp_path / ".local/validation/movielens/"
                  f"failure-python-{case}.png"),

@@ -93,6 +93,34 @@ def test_query_error_is_sanitized():
     assert "private account" not in str(caught.value)
 
 
+@pytest.mark.parametrize("phase", ["embedding", "retrieval", "reranking"])
+def test_service_wrappers_preserve_exact_cause_and_traceback(monkeypatch, caplog, phase):
+    import traceback
+
+    original = ValueError("https://private.invalid/?key=secret document-content")
+    operation = Mock(side_effect=original)
+    client = Mock()
+    if phase == "embedding":
+        client.embeddings.create = operation
+        monkeypatch.setattr("search_demo.get_embedding_client", lambda: client)
+        monkeypatch.setenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "offline")
+        call = lambda: embed_text("question")
+    elif phase == "retrieval":
+        client.query_items = operation
+        call = lambda: search(client, "fulltext", "question")
+    else:
+        client.semantic_rerank = operation
+        call = lambda: rerank(client, "question", rows())
+    with pytest.raises(SearchError) as caught:
+        call()
+    assert caught.value.__cause__ is original
+    assert original.__traceback__ is not None
+    assert str(original) not in str(caught.value)
+    assert str(original) in "".join(traceback.format_exception(caught.value))
+    operation.assert_called_once()
+    assert not caplog.records  # Only the owning UI/CLI boundary logs the failure.
+
+
 def test_metrics_accumulate_per_response_hook():
     container = Mock()
 

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -38,6 +39,7 @@ PYTHON_CONTAINERS = ("search_qflat", "search_diskann")
 DOTNET_CONTAINERS = ("reranker_dotnet_qflat", "reranker_dotnet_diskann")
 SYSTEM_FIELDS = {"_rid", "_self", "_etag", "_attachments", "_ts"}
 SNAPSHOT_PAGE_SIZE = 128
+logger = logging.getLogger(__name__)
 
 
 def digest(value):
@@ -385,6 +387,8 @@ def seed(containers, rows, client, deployment, model, version, *,
                     except Exception as error:
                         if failure is None:
                             failure = error
+                        else:
+                            logger.exception("Additional document write failed in the settled batch.")
                 # Account for settled successes, then stop before any next
                 # batch/container or cleanup. Never leave background writes.
                 if failure is not None:
@@ -438,10 +442,10 @@ def main():
         try:
             atomic_json(path, receipt)
             print(f"Local receipt: {path}", flush=True)
-        except OSError as error:
-            print(f"Could not save local receipt: {error}", flush=True)
+        except OSError:
             if receipt["status"] == "complete":
                 raise
+            logger.exception("Could not save local receipt; preserving the original seed failure.")
     print(json.dumps(receipt, indent=2), flush=True)
 
 

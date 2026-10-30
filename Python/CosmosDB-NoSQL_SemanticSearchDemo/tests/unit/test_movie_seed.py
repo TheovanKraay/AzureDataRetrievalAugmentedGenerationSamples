@@ -557,6 +557,46 @@ def test_failed_parallel_batch_settles_and_records_success_without_cleanup(targe
     assert receipt["status"] != "complete"
 
 
+def test_parallel_failures_keep_primary_and_log_secondary(
+        targets, corpus, tmp_path, monkeypatch, caplog):
+    identifiers = [row["id"] for row in seed.prepare_source(corpus)]
+    errors = {identifier: ValueError(f"private failure {index}")
+              for index, identifier in enumerate(identifiers[:2])}
+    calls = []
+
+    def create(body):
+        calls.append(body["id"])
+        raise errors[body["id"]]
+
+    monkeypatch.setattr(targets["search_qflat"], "create_item", create)
+    with pytest.raises(ValueError) as caught:
+        run(targets, corpus, tmp_path, cleanup_original_fixtures=True)
+    assert set(calls) == set(errors)  # Only the settled first batch, no retry.
+    records = [record for record in caplog.records if record.exc_info]
+    assert len(records) == 1
+    assert {caught.value, records[0].exc_info[1]} == set(errors.values())
+    assert records[0].exc_info[2] is not None and caught.value.__traceback__ is not None
+    assert not any(c.writes or c.deletes for c in targets.values())
+
+
+def test_receipt_failure_logs_secondary_without_replacing_primary(monkeypatch, caplog, capsys):
+    import sys
+    from unittest.mock import Mock
+
+    primary = ValueError("private source failure")
+    secondary = OSError("private receipt path")
+    monkeypatch.setattr(sys, "argv", ["seed_movies.py", "--confirm-write"])
+    monkeypatch.setattr(seed, "read_source", Mock(side_effect=primary))
+    monkeypatch.setattr(seed, "atomic_json", Mock(side_effect=secondary))
+    with pytest.raises(ValueError) as caught:
+        seed.main()
+    assert caught.value is primary
+    records = [record for record in caplog.records if record.exc_info]
+    assert len(records) == 1 and records[0].exc_info[1] is secondary
+    assert records[0].exc_info[2] is not None
+    assert "private" not in capsys.readouterr().out
+
+
 def test_live_readback_is_paged_and_independent_of_loader_snapshot():
     import ast
     from pathlib import Path

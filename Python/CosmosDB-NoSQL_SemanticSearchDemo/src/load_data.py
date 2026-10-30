@@ -4,12 +4,15 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import copy
 import json
+import logging
 from pathlib import Path
 import time
 
 from azure.cosmos.exceptions import CosmosHttpResponseError
 
 from search_demo import Settings, embed_text, error_details, get_containers, validate_vector
+
+logger = logging.getLogger(__name__)
 
 
 def boolean(value):
@@ -142,6 +145,7 @@ def load_items(containers, items, concurrency=1, failures=None):
             upsert_with_retry(container, item)
             return name, True, None
         except Exception as exc:
+            logger.exception("Document upsert failed.")
             return name, False, error_details(exc)
 
     tasks = ((name, container, item) for item in items for name, container in containers.items())
@@ -182,12 +186,8 @@ def main(argv=None):
         print(json.dumps({"source_items": len(source), "selected_items": len(items),
                           "containers": counts, "failures": failures}, indent=2))
         return int(any(count["failed"] for count in counts.values()))
-    except (ValueError, FileNotFoundError) as exc:
-        # Validation messages do not contain remote service responses.
-        print(json.dumps({"error": str(exc), "complete": False,
-                          "phase": phase, "diagnostic": error_details(exc)}))
-        return 1
     except Exception as exc:
+        logger.exception("Load failed during %s.", phase)
         print(json.dumps({"error": "Load failed. Check input, environment, existing container "
                           "policies, Cosmos Data Contributor permission and network access.",
                           "complete": False, "phase": phase,

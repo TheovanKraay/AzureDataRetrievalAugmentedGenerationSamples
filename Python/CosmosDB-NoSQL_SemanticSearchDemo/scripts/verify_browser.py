@@ -1,12 +1,15 @@
 """Read-only real-browser matrix against apps already owned by the foreground launcher."""
 
 import argparse
+import logging
 import math
 import os
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 import re
+
+logger = logging.getLogger(__name__)
 
 # Targeted additions, not a Cartesian expansion of the baseline mode matrix.
 ADVANCED_CASES = [
@@ -279,6 +282,7 @@ def main():
                     page.screenshot(path=str(failure_path), full_page=True, timeout=10_000)
                     print(f"FAIL {implementation} {case}; screenshot: {failure_path}", file=sys.stderr, flush=True)
                 except (PlaywrightError, OSError) as capture_error:
+                    logger.exception("Failure screenshot capture failed.")
                     print(f"Failure screenshot unavailable ({type(capture_error).__name__}); "
                           "preserving the original test failure.", file=sys.stderr, flush=True)
             raise
