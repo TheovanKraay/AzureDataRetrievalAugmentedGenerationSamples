@@ -236,6 +236,10 @@ settles and logs additional batch failures. Receipt/screenshot failures retain
 their own local diagnostics without replacing the original operation failure.
 CLI subprocess wrappers chain `CalledProcessError`, retaining exit code, command
 and captured stdout/stderr on the cause for local debugging.
+The azd configuration and naming helpers also log nonempty failed-command
+stderr/stdout as labeled sensitive local details alongside the boundary traceback.
+Identical text in both streams is logged once, ignoring surrounding whitespace.
+Successful command output, including environment values, is not logged.
 
 **Treat terminal stderr/logs and ignored `.local/` receipts/screenshots as private.**
 Original exception chains may contain sensitive SDK details, URLs, credentials,

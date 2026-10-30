@@ -68,6 +68,13 @@ def azd(executable, root, arguments):
         try:
             result.check_returncode()
         except subprocess.CalledProcessError as exc:
+            seen = set()
+            for stream, output in (("stderr", exc.stderr), ("stdout", exc.stdout)):
+                detail = (output or "").strip()
+                if detail and detail not in seen:
+                    logger.error("Sensitive local azd %s (do not share raw logs):\n%s",
+                                 stream, detail)
+                    seen.add(detail)
             raise RuntimeError("azd environment operation failed; could not read or persist the account name.") from exc
     return result.stdout
 

@@ -46,6 +46,13 @@ def read_outputs(project_root):
         try:
             result.check_returncode()
         except subprocess.CalledProcessError as exc:
+            seen = set()
+            for stream, output in (("stderr", exc.stderr), ("stdout", exc.stdout)):
+                detail = (output or "").strip()
+                if detail and detail not in seen:
+                    logger.error("Sensitive local azd %s (do not share raw logs):\n%s",
+                                 stream, detail)
+                    seen.add(detail)
             raise RuntimeError("azd env get-values failed. Select a provisioned environment.") from exc
     try:
         return json.loads(result.stdout)

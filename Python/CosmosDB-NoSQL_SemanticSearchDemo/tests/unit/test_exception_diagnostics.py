@@ -155,3 +155,76 @@ def test_cli_wrapper_retains_exit_code_command_and_captured_output(monkeypatch, 
     assert cause.__traceback__ is not None
     assert PRIVATE not in str(caught.value)
     run.assert_called_once()
+
+
+@pytest.mark.parametrize("name", ["configure_azd", "prepare_azd"])
+@pytest.mark.parametrize("stdout,stderr", [
+    ("private-stdout-detail", "private-stderr-detail"),
+    ("private-shared-detail", "private-shared-detail"),
+    ("\nprivate-shared-detail\n", "private-shared-detail"),
+    ("", "private-stderr-detail"),
+    ("private-stdout-detail", None),
+    (" \n", None),
+])
+def test_failed_azd_output_reaches_private_terminal_once_with_traceback(
+        monkeypatch, capsys, caplog, name, stdout, stderr):
+    module = script(name)
+    result = subprocess.CompletedProcess(["mock-azd", "offline"], 7,
+                                         stdout=stdout, stderr=stderr)
+    run = Mock(return_value=result)
+    monkeypatch.setattr(module.subprocess, "run", run)
+    monkeypatch.setattr(module.shutil, "which", lambda _: "mock-azd")
+    monkeypatch.setattr(sys, "argv", [f"{name}.py"])
+    # Exercise actual terminal formatting, not only LogRecord/cause attributes.
+    handler = logging.StreamHandler()
+    module.logger.addHandler(handler)
+    try:
+        with caplog.at_level(logging.ERROR):
+            assert module.main() == 1
+    finally:
+        module.logger.removeHandler(handler)
+    run.assert_called_once()
+    terminal = capsys.readouterr()
+    details = {value.strip() for value in (stdout, stderr) if value and value.strip()}
+    for detail in details:
+        assert terminal.err.count(detail) == 1
+        assert detail not in terminal.out
+    records = [record for record in caplog.records if record.name == name]
+    detail_records = [record for record in records if not record.exc_info]
+    assert len(detail_records) == len(details)
+    assert all("Sensitive local azd" in record.getMessage() for record in detail_records)
+    assert all("do not share raw logs" in record.getMessage() for record in detail_records)
+    if stderr and stderr.strip():
+        assert "stderr" in detail_records[0].getMessage()
+    if stdout and stdout.strip() and stdout.strip() != (stderr or "").strip():
+        assert "stdout" in detail_records[-1].getMessage()
+    tracebacks = [record for record in records if record.exc_info]
+    assert len(tracebacks) == 1
+    cause = tracebacks[0].exc_info[1].__cause__
+    assert isinstance(cause, subprocess.CalledProcessError)
+    assert cause.stdout == stdout and cause.stderr == stderr
+    assert cause.returncode == 7 and cause.__traceback__ is not None
+    assert "Traceback (most recent call last)" in terminal.err
+    assert "CalledProcessError" in terminal.err and "RuntimeError" in terminal.err
+    assert "direct cause" in terminal.err
+    assert terminal.out.strip()  # The existing safe failure summary is retained.
+
+
+@pytest.mark.parametrize("name", ["configure_azd", "prepare_azd"])
+def test_successful_azd_output_is_not_logged(monkeypatch, caplog, capsys, name):
+    module = script(name)
+    values = {"AZURE_ENV_NAME": "offline", "PRIVATE_SETTING": "must-not-be-logged"}
+    stdout = json.dumps(values)
+    run = Mock(return_value=subprocess.CompletedProcess(
+        ["mock-azd", "offline"], 0, stdout=stdout, stderr="successful-command-warning"))
+    monkeypatch.setattr(module.subprocess, "run", run)
+    monkeypatch.setattr(module.shutil, "which", lambda _: "mock-azd")
+    with caplog.at_level(logging.DEBUG):
+        if name == "configure_azd":
+            assert module.read_outputs(ROOT) == values
+        else:
+            assert module.azd("mock-azd", ROOT, ["env", "get-values"]) == stdout
+    run.assert_called_once()
+    assert not caplog.records
+    terminal = capsys.readouterr()
+    assert not terminal.out and not terminal.err
